@@ -1,0 +1,122 @@
+/* Print stylesheet: Hides workspace UI and cleanly prints only the active rendered note on white paper */
+
+@media print {
+  :root,
+  [data-theme='dark'],
+  [data-theme='light'] {
+    --bg: #ffffff !important;
+    --pn: #ffffff !important;
+    --rz: #f6f5f2 !important;
+    --bd: rgba(0, 0, 0, 0.14) !important;
+    --bd2: rgba(0, 0, 0, 0.28) !important;
+    --tx: #141311 !important;
+    --mu: #4a463f !important;
+    --accent: #1c416b !important;
+    --accent-text: #1c416b !important;
+    --callout-bg: #f4f6f9 !important;
+
+    --ink-default: #141311 !important;
+    --ink-cobalt: #1c416b !important;
+    --ink-oxblood: #72241c !important;
+    --ink-verdigris: #184e43 !important;
+    --ink-plum: #4f2c5d !important;
+    --ink-sepia: #65411c !important;
+    --ink-graphite: #4a463f !important;
+  }
+
+  /* Reset document background for printing */
+  html, body {
+    background: #ffffff !important;
+    color: #141311 !important;
+    font-size: 12pt !important;
+    line-height: 1.6 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide app chrome, video pane, tray, dock, and controls */
+  header,
+  nav,
+  aside,
+  #topbar,
+  #video-column,
+  #frames-tray,
+  #chat-dock,
+  #note-tabs-strip,
+  #note-toolbar,
+  #write-editor-area,
+  .toast-viewport,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Expand notes pane to full width */
+  #main-layout,
+  #notes-column,
+  #notes-panel,
+  .note-page-container {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  #note-page-content {
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    padding: 16pt !important;
+    color: #141311 !important;
+    background: #ffffff !important;
+    font-size: 12pt !important;
+  }
+
+  /* Make sure formulas and diagrams print crisply and never split across pages */
+  .katex-display,
+  .formula-block {
+    background: #f7f6f2 !important;
+    border: 1px solid #dcd8ce !important;
+    color: #111111 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .callout-box {
+    background: #f4f6f9 !important;
+    border-left: 3px solid #1c416b !important;
+    color: #141311 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .inline-frame-card {
+    background: #f9f8f5 !important;
+    border: 1px solid #dcd8ce !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Avoid orphaned headers */
+  h1, h2, h3 {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    color: #000000 !important;
+  }
+
+  img {
+    max-width: 100% !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  @page {
+    margin: 1.5cm;
+    size: auto;
+  }
+}
