@@ -8,11 +8,15 @@ import {
   searchFormulaLibrary,
   findExactLocalFormula,
   cleanAndValidateLatex,
+  cleanLatex,
 } from './formulas.js';
 import {
   sanitizeFilename,
   resolveMarkdownImagesForExport,
 } from './export.js';
+import { fileToBase64 } from './fileToBase64.js';
+import { saveToDisk } from './saveToDisk.js';
+import { transcribeImage } from './transcribeImage.js';
 import {
   parseNoteContent,
   serializeNoteContent,
@@ -89,6 +93,26 @@ describe('Formula Slash Library & LaTeX Sanitizer', () => {
     expect(res.isValid).toBe(false);
     expect(res.error).toBeTruthy();
     expect(res.wrapped).toContain('\\frac{1}{unclosed');
+  });
+
+  it('extracts clean math from chain-of-thought preamble and deduplicates repeated blocks (cleanLatex)', () => {
+    const withPreamble =
+      'Let us analyze the image carefully to transcribe the equation step by step:\n$$J(\\theta) = \\frac{1}{2m} \\sum (h_\\theta(x) - y)^2$$';
+    expect(cleanLatex(withPreamble)).toBe(
+      '$$J(\\theta) = \\frac{1}{2m} \\sum (h_\\theta(x) - y)^2$$'
+    );
+
+    const duplicated = '$$E = mc^2$$\n$$E = mc^2$$';
+    expect(cleanLatex(duplicated)).toBe('$$E = mc^2$$');
+  });
+
+  it('exposes merged compatibility helpers (fileToBase64, saveToDisk, transcribeImage)', async () => {
+    expect(typeof fileToBase64).toBe('function');
+    expect(typeof saveToDisk).toBe('function');
+    expect(typeof transcribeImage).toBe('function');
+
+    const b64Res = await fileToBase64('data:image/jpeg;base64,QUJD');
+    expect(b64Res.base64).toBe('QUJD');
   });
 });
 

@@ -1,6 +1,7 @@
 import React, {
   useState,
   useRef,
+  useEffect,
   useCallback,
   useImperativeHandle,
   forwardRef,
@@ -117,14 +118,16 @@ export const NotesPane = forwardRef(function NotesPane(
 
   // Keep a synchronous ref to the latest active tab & parsed document so async callbacks
   // (like AI transcription completing after a network round-trip) never read a stale closure!
-  latestStateRef.current = {
-    activeTab,
-    parsedDoc,
-    cursorStart,
-    cursorEnd,
-    currentCaretStyle,
-    noteFont,
-  };
+  useEffect(() => {
+    latestStateRef.current = {
+      activeTab,
+      parsedDoc,
+      cursorStart,
+      cursorEnd,
+      currentCaretStyle,
+      noteFont,
+    };
+  }, [activeTab, parsedDoc, cursorStart, cursorEnd, currentCaretStyle, noteFont]);
 
   const pushUndoSnapshot = useCallback((tabId, content) => {
     if (!tabId) return;
