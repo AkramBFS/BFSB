@@ -317,7 +317,32 @@ export function setStoredApiKey(apiKey) {
 
 export function getDemoApiKey() {
   try {
-    return (import.meta.env && import.meta.env.VITE_DEMO_GEMINI_API_KEY) || '';
+    const env =
+      typeof import.meta !== 'undefined' && import.meta.env
+        ? import.meta.env
+        : typeof process !== 'undefined' && process.env
+        ? process.env
+        : {};
+    return (
+      env.VITE_GEMMA_API_KEY ||
+      env.VITE_GEMINI_API_KEY ||
+      env.VITE_DEMO_GEMINI_API_KEY ||
+      ''
+    ).trim();
+  } catch {
+    return '';
+  }
+}
+
+export function getEnvGemmaEndpoint() {
+  try {
+    const env =
+      typeof import.meta !== 'undefined' && import.meta.env
+        ? import.meta.env
+        : typeof process !== 'undefined' && process.env
+        ? process.env
+        : {};
+    return (env.VITE_GEMMA_ENDPOINT || '').trim();
   } catch {
     return '';
   }
