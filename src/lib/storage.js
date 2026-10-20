@@ -144,14 +144,95 @@ export async function clearAllFrameMedia() {
 }
 
 /**
- * Downscale and JPEG-compress any image dataUrl or HTMLCanvasElement/HTMLImageElement
+ * Downscale and JPEG-compress any image dataUrl, File, or Blob
  * so it stays fast for AI requests and compact for browser storage.
+ * Uses hardware-accelerated createImageBitmap when given a File/Blob in supported browsers,
+ * with graceful fallback to HTMLImageElement + FileReader.
  */
-export function compressImageDataUrl(sourceDataUrl, { maxWidth = 1280, maxHeight = 720, quality = 0.84 } = {}) {
+export async function compressImageDataUrl(
+  source,
+  { maxWidth = 1280, maxHeight = 720, quality = 0.85 } = {}
+) {
+  // Fast path for File / Blob using createImageBitmap (ported from fileToBase64)
+  if (
+    typeof window !== 'undefined' &&
+    typeof document !== 'undefined' &&
+    typeof createImageBitmap === 'function' &&
+    source &&
+    typeof source === 'object' &&
+    typeof source.type === 'string' &&
+    source.type.startsWith('image/')
+  ) {
+    try {
+      const bitmap = await createImageBitmap(source);
+      let w = bitmap.width || 640;
+      let h = bitmap.height || 360;
+
+      if (w > maxWidth || h > maxHeight) {
+        const ratio = Math.min(maxWidth / w, maxHeight / h);
+        w = Math.max(1, Math.round(w * ratio));
+        h = Math.max(1, Math.round(h * ratio));
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#141311';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(bitmap, 0, 0, w, h);
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        const commaIdx = compressedDataUrl.indexOf(',');
+        const base64 =
+          commaIdx !== -1 ? compressedDataUrl.slice(commaIdx + 1) : compressedDataUrl;
+        if (typeof bitmap.close === 'function') bitmap.close();
+        return {
+          dataUrl: compressedDataUrl,
+          base64,
+          mimeType: 'image/jpeg',
+          width: w,
+          height: h,
+        };
+      }
+    } catch {
+      // Fall through to FileReader + Image element path
+    }
+  }
+
+  // Convert File / Blob to data URL first if createImageBitmap was unavailable or skipped
+  let sourceDataUrl = source;
+  if (source && typeof source === 'object' && typeof FileReader !== 'undefined') {
+    sourceDataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          resolve(reader.result);
+        } else {
+          reject(new Error('FileReader result is not a string'));
+        }
+      };
+      reader.onerror = () =>
+        reject(reader.error || new Error('FileReader failed to read file'));
+      reader.readAsDataURL(source);
+    });
+  }
+
   return new Promise((resolve, reject) => {
     if (typeof document === 'undefined') {
-      const clean = String(sourceDataUrl || '').replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
-      resolve({ dataUrl: sourceDataUrl, base64: clean, width: maxWidth, height: maxHeight });
+      const str = String(sourceDataUrl || '');
+      const commaIdx = str.indexOf(',');
+      const clean =
+        commaIdx !== -1
+          ? str.slice(commaIdx + 1)
+          : str.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+      resolve({
+        dataUrl: str,
+        base64: clean,
+        mimeType: 'image/jpeg',
+        width: maxWidth,
+        height: maxHeight,
+      });
       return;
     }
 
@@ -172,21 +253,28 @@ export function compressImageDataUrl(sourceDataUrl, { maxWidth = 1280, maxHeight
         canvas.height = h;
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          // Fill subtle dark backing in case source is transparent PNG
           ctx.fillStyle = '#141311';
           ctx.fillRect(0, 0, w, h);
           ctx.drawImage(img, 0, 0, w, h);
         }
 
         const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-        const base64 = compressedDataUrl.replace(/^data:image\/jpeg;base64,/, '');
-        resolve({ dataUrl: compressedDataUrl, base64, width: w, height: h });
+        const commaIdx = compressedDataUrl.indexOf(',');
+        const base64 =
+          commaIdx !== -1 ? compressedDataUrl.slice(commaIdx + 1) : compressedDataUrl;
+        resolve({
+          dataUrl: compressedDataUrl,
+          base64,
+          mimeType: 'image/jpeg',
+          width: w,
+          height: h,
+        });
       } catch (err) {
         reject(err);
       }
     };
     img.onerror = () => reject(new Error('Could not decode image data.'));
-    img.src = sourceDataUrl;
+    img.src = String(sourceDataUrl || '');
   });
 }
 
