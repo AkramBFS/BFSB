@@ -224,25 +224,50 @@ export function findExactLocalFormula(rawQuery = '') {
 }
 
 /**
- * Clean raw AI model output (strip markdown fences, stray wrappers, commentary)
- * and validate with KaTeX before inserting into the note.
+ * Clean raw AI model output (strip markdown fences, chain-of-thought preamble,
+ * duplicate blocks, stray wrappers) and validate with KaTeX before inserting into the note.
  */
 export function cleanAndValidateLatex(rawText = '', preferredDisplayMode = 'block') {
   let cleaned = String(rawText || '').trim();
 
-  // 1. Extract from ```latex ... ``` or ``` ... ``` code blocks if present
-  const fenceMatch = cleaned.match(/```(?:latex|tex|math)?\s*([\s\S]*?)```/i);
+  // 1. Extract from ```latex ... ```, ```markdown ... ```, ```katex ... ```, or ``` ... ``` code blocks if present
+  const fenceMatch = cleaned.match(/```(?:latex|tex|math|markdown|katex)?\s*\n?([\s\S]*?)\n?```/i);
   if (fenceMatch && fenceMatch[1]) {
     cleaned = fenceMatch[1].trim();
+  } else {
+    // Strip unclosed leading or trailing code fences if present
+    cleaned = cleaned.replace(/^```(?:latex|tex|math|markdown|katex)?\s*\n?/i, '');
+    cleaned = cleaned.replace(/\n?```\s*$/i, '').trim();
   }
 
-  // 2. Remove common conversational preamble lines if any slipped through
+  // 2. If block math ($$...$$) exists inside the output with chain-of-thought preamble or duplicates
+  const blockMathMatches = [...cleaned.matchAll(/\$\$[\s\S]+?\$\$/g)];
+  if (blockMathMatches.length > 0) {
+    if (blockMathMatches[0].index > 30) {
+      // Extract the final block equation when preceded by chain-of-thought reasoning
+      cleaned = blockMathMatches[blockMathMatches.length - 1][0].trim();
+    } else if (
+      blockMathMatches.length >= 2 &&
+      blockMathMatches[0][0].trim() === blockMathMatches[1][0].trim()
+    ) {
+      // Deduplicate adjacent identical block equations
+      cleaned = blockMathMatches[0][0].trim();
+    }
+  } else {
+    // If only inline math ($...$) exists with preceding reasoning preamble (> 30 chars)
+    const inlineMathMatches = [...cleaned.matchAll(/\$[^$\n]+?\$/g)];
+    if (inlineMathMatches.length > 0 && inlineMathMatches[0].index > 30) {
+      cleaned = inlineMathMatches[inlineMathMatches.length - 1][0].trim();
+    }
+  }
+
+  // 3. Remove common conversational preamble lines if any slipped through
   cleaned = cleaned
     .replace(/^(here\s+is\s+the\s+(latex|formula|equation|math)\s*:?\s*)/i, '')
     .replace(/^(latex\s*:?\s*)/i, '')
     .trim();
 
-  // 3. Detect if wrapped in $$...$$, \[...\], $...$, or \(...\)
+  // 4. Detect if wrapped in $$...$$, \[...\], $...$, or \(...\)
   let detectedBlock = preferredDisplayMode === 'block';
   if (cleaned.startsWith('$$') && cleaned.endsWith('$$') && cleaned.length > 4) {
     cleaned = cleaned.slice(2, -2).trim();
@@ -267,7 +292,7 @@ export function cleanAndValidateLatex(rawText = '', preferredDisplayMode = 'bloc
     detectedBlock = preferredDisplayMode === 'inline' ? false : true;
   }
 
-  // 4. Validate with KaTeX
+  // 5. Validate with KaTeX
   let isValid = true;
   let katexError = null;
   if (!cleaned) {
@@ -296,4 +321,21 @@ export function cleanAndValidateLatex(rawText = '', preferredDisplayMode = 'bloc
     error: katexError,
     displayMode: detectedBlock ? 'block' : 'inline',
   };
+}
+
+/**
+ * Strips code fences, chain-of-thought commentary, and preamble, returning ONLY the clean KaTeX math string
+ * wrapped in `$$...$$` or `$...$` (compatible with `soheib-ai-export`'s `cleanLatex(rawText)` signature).
+ */
+export function cleanLatex(rawText = '') {
+  if (!rawText || !String(rawText).trim()) return '';
+  const raw = String(rawText).trim();
+  const isMarkdownDoc =
+    !raw.includes('$') &&
+    (raw.startsWith('#') || raw.startsWith('-') || raw.startsWith('*'));
+  if (isMarkdownDoc) return raw;
+
+  const res = cleanAndValidateLatex(raw, 'block');
+  if (!res.latex) return '';
+  return res.displayMode === 'block' ? `$$${res.latex}$$` : `$${res.latex}$`;
 }

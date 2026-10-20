@@ -1,4 +1,8 @@
-import { getEffectiveApiKey, compressImageDataUrl } from './storage.js';
+import {
+  getEffectiveApiKey,
+  getEnvGemmaEndpoint,
+  compressImageDataUrl,
+} from './storage.js';
 import { cleanAndValidateLatex, findExactLocalFormula } from './formulas.js';
 
 export const DEFAULT_AI_MODEL = 'gemma-4-31b-it';
@@ -15,6 +19,12 @@ export const AI_MODEL_OPTIONS = [
     label: 'Gemma 4 26B MoE (Fast · Vision)',
     badge: 'Gemma 4 MoE',
     description: 'Hosted 26B Mixture-of-Experts (4B active) multimodal model',
+  },
+  {
+    id: 'gemini-flash-lite-latest',
+    label: 'Gemini Flash Lite (Ultra-fast OCR)',
+    badge: 'Flash Lite',
+    description: 'Low-latency multimodal model for instant formula transcription',
   },
   {
     id: 'gemini-2.5-flash',
@@ -70,9 +80,9 @@ async function prepareImageBase64(rawImage) {
   // Downscale if large so requests stay fast and well below size limits
   try {
     const compressed = await compressImageDataUrl(asDataUrl, {
-      maxWidth: 1152,
+      maxWidth: 1200,
       maxHeight: 720,
-      quality: 0.84,
+      quality: 0.85,
     });
     return compressed.base64;
   } catch {
@@ -87,16 +97,24 @@ function normalizeApiError(status, errorBody) {
   const rawMsg = (errorBody?.error?.message || '').toLowerCase();
 
   if (status === 400) {
-    if (rawMsg.includes('api_key_invalid') || rawMsg.includes('api key not valid') || rawMsg.includes('key')) {
+    if (
+      rawMsg.includes('api_key_invalid') ||
+      rawMsg.includes('api key not valid') ||
+      rawMsg.includes('key')
+    ) {
       return new AiServiceError(
         'INVALID_KEY',
         'The Gemini API key was not accepted. Check your key in AI settings.'
       );
     }
-    if (rawMsg.includes('image') || rawMsg.includes('inline_data') || rawMsg.includes('multimodal')) {
+    if (
+      rawMsg.includes('image') ||
+      rawMsg.includes('inline_data') ||
+      rawMsg.includes('multimodal')
+    ) {
       return new AiServiceError(
         'IMAGE_REJECTED',
-        'This model could not process the attached image. Try switching to gemma-4-31b-it or gemini-2.5-flash in settings.'
+        'This model could not process the attached image. Try switching to gemma-4-31b-it or gemini-flash-lite-latest in settings.'
       );
     }
     return new AiServiceError(
@@ -147,7 +165,40 @@ function normalizeApiError(status, errorBody) {
 }
 
 /**
+ * Build ordered candidate endpoints for resilience on 429 / 5xx errors
+ * (combines explicit model endpoint, VITE_GEMMA_ENDPOINT, and high-speed fallback endpoints).
+ */
+function buildCandidateEndpoints(targetModel) {
+  const primary = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    targetModel
+  )}:generateContent`;
+  const envEndpoint = getEnvGemmaEndpoint();
+  const fallbacks = [
+    envEndpoint,
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent',
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+  ].filter(Boolean);
+
+  const list = [];
+  // If user stayed on the default model and a custom VITE_GEMMA_ENDPOINT is configured, prioritize it
+  if (targetModel === DEFAULT_AI_MODEL && envEndpoint) {
+    list.push(envEndpoint);
+  }
+  if (!list.includes(primary)) {
+    list.push(primary);
+  }
+  for (const fb of fallbacks) {
+    if (!list.includes(fb)) {
+      list.push(fb);
+    }
+  }
+  return list;
+}
+
+/**
  * Core call to Google Gemini / Hosted Gemma 4 `generateContent` endpoint.
+ * Includes automatic multi-endpoint fallback on 429/5xx, inline systemInstruction retry on 400,
+ * and filtering of reasoning (`part.thought === true`) parts.
  */
 export async function callGeminiGenerateContent({
   contents,
@@ -173,9 +224,12 @@ export async function callGeminiGenerateContent({
   }
 
   const targetModel = (model || DEFAULT_AI_MODEL).trim();
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-    targetModel
-  )}:generateContent?key=${encodeURIComponent(key)}`;
+  const endpointsToTry = buildCandidateEndpoints(targetModel);
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-goog-api-key': key,
+  };
 
   const buildPayload = (includeSysInstruction = true) => {
     const body = {
@@ -190,7 +244,6 @@ export async function callGeminiGenerateContent({
         parts: [{ text: systemInstruction }],
       };
     } else if (!includeSysInstruction && systemInstruction && contents.length > 0) {
-      // Prepend instruction to the first user message for models that do not support systemInstruction field
       const cloned = JSON.parse(JSON.stringify(contents));
       const first = cloned[0];
       if (first && Array.isArray(first.parts)) {
@@ -201,41 +254,92 @@ export async function callGeminiGenerateContent({
     return body;
   };
 
-  let response;
-  try {
-    response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildPayload(true)),
-      signal,
-    });
+  const withKeyParam = (baseUrl) => {
+    if (baseUrl.includes('key=')) return baseUrl;
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${sep}key=${encodeURIComponent(key)}`;
+  };
 
-    // If a hosted Gemma variant rejects the top-level systemInstruction field, retry once with inline instruction
-    if (response.status === 400 && systemInstruction) {
-      const errPreview = await response.clone().json().catch(() => ({}));
-      const msg = (errPreview?.error?.message || '').toLowerCase();
-      if (msg.includes('system_instruction') || msg.includes('systeminstruction') || msg.includes('developer instruction')) {
-        response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(buildPayload(false)),
-          signal,
-        });
+  let response = null;
+  let lastError = null;
+
+  for (let i = 0; i < endpointsToTry.length; i++) {
+    const baseUrl = endpointsToTry[i];
+    const isLastEndpoint = i === endpointsToTry.length - 1;
+    const endpointUrl = withKeyParam(baseUrl);
+
+    try {
+      response = await fetch(endpointUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(buildPayload(true)),
+        signal,
+      });
+
+      // If a hosted Gemma variant rejects the top-level systemInstruction field, retry once with inline instruction
+      if (response.status === 400 && systemInstruction) {
+        const errPreview = await response.clone().json().catch(() => ({}));
+        const msg = (errPreview?.error?.message || '').toLowerCase();
+        if (
+          msg.includes('system_instruction') ||
+          msg.includes('systeminstruction') ||
+          msg.includes('developer instruction')
+        ) {
+          response = await fetch(endpointUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(buildPayload(false)),
+            signal,
+          });
+        }
       }
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        const normalizedErr = normalizeApiError(response.status, errBody);
+        // If 429 (rate limit), 404 (model unavailable on tier), or 5xx, try next fallback endpoint
+        if (
+          !isLastEndpoint &&
+          (response.status === 429 || response.status === 404 || response.status >= 500)
+        ) {
+          lastError = normalizedErr;
+          continue;
+        }
+        throw normalizedErr;
+      }
+
+      // Success! Break out of fallback loop
+      break;
+    } catch (err) {
+      if (err?.name === 'AbortError' || err?.code === 'ABORTED') {
+        throw new AiServiceError('ABORTED', 'Request cancelled.');
+      }
+      if (err instanceof AiServiceError) {
+        lastError = err;
+        if (!isLastEndpoint && (err.code === 'RATE_LIMIT' || err.code === 'SERVER_ERROR' || err.code === 'MODEL_UNAVAILABLE')) {
+          continue;
+        }
+        throw err;
+      }
+      lastError = new AiServiceError(
+        'NETWORK_ERROR',
+        'Could not reach the Gemini API. Check your internet connection and try again.'
+      );
+      if (!isLastEndpoint) {
+        continue;
+      }
+      throw lastError;
     }
-  } catch (err) {
-    if (err?.name === 'AbortError') {
-      throw new AiServiceError('ABORTED', 'Request cancelled.');
-    }
-    throw new AiServiceError(
-      'NETWORK_ERROR',
-      'Could not reach the Gemini API. Check your internet connection and try again.'
-    );
   }
 
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
-    throw normalizeApiError(response.status, errBody);
+  if (!response || !response.ok) {
+    throw (
+      lastError ||
+      new AiServiceError(
+        'UNKNOWN_ERROR',
+        'Could not complete the AI request on any available endpoint.'
+      )
+    );
   }
 
   const data = await response.json().catch(() => null);
@@ -262,7 +366,11 @@ export async function callGeminiGenerateContent({
   }
 
   const parts = candidate.content?.parts || [];
-  const text = parts
+  // Exclude internal reasoning/thinking parts where thought === true (ported from soheib-ai-export)
+  const nonThoughtParts = parts.filter((part) => !part.thought);
+  const partsToUse = nonThoughtParts.length > 0 ? nonThoughtParts : parts;
+
+  const text = partsToUse
     .map((p) => p.text || '')
     .join('')
     .trim();
@@ -293,7 +401,6 @@ export async function askStudyAssistant({
 }) {
   const recentHistory = history.filter((m) => !m.error && m.text).slice(-10);
 
-  // Identify the last historical message with an image so follow-ups on an earlier frame retain vision context
   let lastImageTurnIndex = -1;
   if (!imageBase64) {
     for (let i = recentHistory.length - 1; i >= 0; i--) {
@@ -340,7 +447,9 @@ export async function askStudyAssistant({
     }
   }
   currentParts.push({
-    text: (text || '').trim() || 'Explain the mathematical formula and concepts shown in this lecture frame.',
+    text:
+      (text || '').trim() ||
+      'Explain the mathematical formula and concepts shown in this lecture frame.',
   });
 
   contents.push({
@@ -365,12 +474,16 @@ export async function askStudyAssistant({
  */
 export async function transcribeImageToLatex({
   imageBase64,
+  mimeType = 'image/jpeg',
   displayMode = 'block',
   model = DEFAULT_AI_MODEL,
   signal,
 }) {
   if (!imageBase64) {
-    throw new AiServiceError('NO_IMAGE', 'Select or capture an image first to transcribe its math.');
+    throw new AiServiceError(
+      'NO_IMAGE',
+      'Select or capture an image first to transcribe its math.'
+    );
   }
 
   const prepared = await prepareImageBase64(imageBase64);
@@ -380,7 +493,7 @@ export async function transcribeImageToLatex({
       parts: [
         {
           inline_data: {
-            mime_type: 'image/jpeg',
+            mime_type: mimeType || 'image/jpeg',
             data: prepared,
           },
         },
@@ -403,7 +516,9 @@ export async function transcribeImageToLatex({
   if (
     !rawOut ||
     rawOut.toUpperCase().includes('NO_MATH_FOUND') ||
-    /^(no\s+math|no\s+formula|no\s+equation|there\s+is\s+no\s+(math|formula|equation))/i.test(rawOut)
+    /^(no\s+math|no\s+formula|no\s+equation|there\s+is\s+no\s+(math|formula|equation))/i.test(
+      rawOut
+    )
   ) {
     throw new AiServiceError(
       'NO_MATH_FOUND',
@@ -434,7 +549,10 @@ export async function resolveFormulaFromText({
   const localMatch = findExactLocalFormula(trimmed);
   if (localMatch) {
     return {
-      ...cleanAndValidateLatex(localMatch.latex, localMatch.displayMode ? 'block' : 'inline'),
+      ...cleanAndValidateLatex(
+        localMatch.latex,
+        localMatch.displayMode ? 'block' : 'inline'
+      ),
       source: 'local',
       title: localMatch.title,
     };
