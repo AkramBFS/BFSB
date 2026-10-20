@@ -40,7 +40,7 @@ export const AI_MODEL_OPTIONS = [
   },
 ];
 
-const CHAT_SYSTEM_INSTRUCTION = `You are ML-Pad's study assistant for computer science and machine learning lectures.
+const CHAT_SYSTEM_INSTRUCTION = `You are GemmaTH's study assistant for computer science and machine learning lectures.
 Rules:
 1. Explain concepts clearly, concisely, and without filler or conversational padding.
 2. Always format inline mathematical symbols and variables using single dollar signs like $\\theta_j$ or $\\alpha$, and standalone equations using double dollar signs on their own lines like:
@@ -579,4 +579,305 @@ export async function resolveFormulaFromText({
     source: 'ai',
     title: trimmed,
   };
+}
+
+
+const STUDY_SUMMARY_SYSTEM_INSTRUCTION = `You are GemmaTH's academic study assistant for computer science, machine learning, and mathematics notes.
+Your job is to distill the student's current lecture notes into a crisp executive summary and extract the key mathematical formulas.
+Rules:
+1. Provide EXACTLY three bullet points ("- ...") forming a concise executive summary of the core concepts in the notes.
+2. Follow the three bullet points with a "### Key Formulas" section listing the most important mathematical equations and definitions from the notes.
+3. Format all inline mathematical symbols and variables with single dollar signs ($...$) and standalone display equations with double dollar signs ($$...$$) on their own lines using valid KaTeX syntax.
+4. Output clean Markdown only. Do NOT wrap the response in outer markdown code fences.`;
+
+const STUDY_QUIZ_SYSTEM_INSTRUCTION = `You are GemmaTH's active-recall quiz generator for machine learning and mathematics notes.
+Read the student's notes and produce EXACTLY three active-recall question/answer pairs that test conceptual understanding and mathematical intuition.
+CRITICAL OUTPUT FORMAT REQUIREMENT:
+- Your reply MUST be strictly machine-readable JSON: a JSON array of exactly 3 objects, each having "question" and "answer" string properties:
+[
+  { "question": "...", "answer": "..." },
+  { "question": "...", "answer": "..." },
+  { "question": "...", "answer": "..." }
+]
+- Output ONLY the JSON array and nothing else (no markdown code fences, no introductory commentary, no trailing prose).
+- Inside "question" and "answer" strings, format inline math with $...$ and block math with $$...$$ (properly escaping backslashes for JSON strings, e.g. "\\\\theta").`;
+
+/**
+ * Strip inline `<span data-ink="..." data-font="...">` tags from stored note content
+ * so the AI model receives clean markdown and math text.
+ */
+export function stripNoteStylingSpans(noteContent = '') {
+  return String(noteContent || '')
+    .replace(/<span\s+[^>]*?>([\s\S]*?)<\/span>/gi, '$1')
+    .trim();
+}
+
+/**
+ * Clean outer markdown code fences if the model wrapped a markdown summary response.
+ */
+export function cleanSummaryMarkdown(rawText = '') {
+  let cleaned = String(rawText || '').trim();
+  const outerFence = cleaned.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
+  if (outerFence && outerFence[1]) {
+    cleaned = outerFence[1].trim();
+  }
+  return cleaned;
+}
+
+/**
+ * Defensively parse a model's quiz response into a validated array of `{ id, question, answer }` items.
+ * Tolerates markdown code fences (` ```json ... ``` `), surrounding prose before/after the JSON array,
+ * `{ "quiz": [...] }` / `{ "questions": [...] }` wrapper objects, unescaped LaTeX backslashes inside JSON strings,
+ * or structured `Q1: ... A1: ...` fallback blocks.
+ * Throws `AiServiceError('MALFORMED_QUIZ', ...)` if a valid list of Q&A pairs cannot be extracted.
+ */
+export function parseQuizResponseDefensively(rawText = '') {
+  const raw = String(rawText || '').trim();
+  if (!raw) {
+    throw new AiServiceError(
+      'MALFORMED_QUIZ',
+      'The model returned an empty quiz response. Please try again.'
+    );
+  }
+
+  // 1. Strip code fences if present
+  let candidate = raw;
+  const fenceMatch = candidate.match(/```(?:json|javascript|js)?\s*\n?([\s\S]*?)\n?```/i);
+  if (fenceMatch && fenceMatch[1]) {
+    candidate = fenceMatch[1].trim();
+  } else {
+    candidate = candidate
+      .replace(/^```(?:json|javascript|js)?\s*\n?/i, '')
+      .replace(/\n?```\s*$/i, '')
+      .trim();
+  }
+
+  // Helper to normalize an array of raw items into validated { id, question, answer } objects
+  const normalizeItems = (arr) => {
+    if (!Array.isArray(arr)) return null;
+    const valid = arr
+      .map((item, idx) => {
+        if (!item || typeof item !== 'object') return null;
+        const q = String(
+          item.question ?? item.q ?? item.prompt ?? item.title ?? ''
+        ).trim();
+        const a = String(
+          item.answer ?? item.a ?? item.solution ?? item.explanation ?? ''
+        ).trim();
+        if (!q || !a) return null;
+        return {
+          id: `quiz-item-${idx + 1}`,
+          question: q,
+          answer: a,
+        };
+      })
+      .filter(Boolean);
+    return valid.length > 0 ? valid.slice(0, 3) : null;
+  };
+
+  // Helper to attempt JSON.parse, with automatic pre-repair for single unescaped LaTeX backslashes
+  // (including \theta, \frac, \beta, \nabla, \right which JSON.parse would otherwise turn into \t, \f, \b, \n, \r control chars)
+  const repairLatexBackslashes = (str) =>
+    str.replace(
+      /(?<!\\)\\(theta|tau|times|text|frac|forall|beta|begin|bar|hat|nabla|nu|neq|alpha|approx|sum|sigma|sqrt|partial|pi|prod|lambda|log|left|right|int|infty|in|cdot|mathcal|mathbf|mathrm|delta|Delta|epsilon|gamma|omega|Omega|mu|phi|psi|rho|leq|geq|subset|supset|mid|parallel|to|rightarrow|leftarrow|Rightarrow|Leftarrow|norm|vec|dot|tilde)/g,
+      '\\\\$1'
+    );
+
+  const tryParseJson = (jsonStr) => {
+    const repaired = repairLatexBackslashes(jsonStr);
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      try {
+        return JSON.parse(jsonStr);
+      } catch {
+        return null;
+      }
+    }
+  };
+
+  // 2. Try direct JSON parse or extracting the outermost [...] array or {...} object
+  const attempts = [candidate];
+  const firstBracket = candidate.indexOf('[');
+  const lastBracket = candidate.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    attempts.push(candidate.slice(firstBracket, lastBracket + 1));
+  }
+  const firstBrace = candidate.indexOf('{');
+  const lastBrace = candidate.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    attempts.push(candidate.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const snippet of attempts) {
+    const parsed = tryParseJson(snippet);
+    if (parsed) {
+      if (Array.isArray(parsed)) {
+        const items = normalizeItems(parsed);
+        if (items) return items;
+      } else if (typeof parsed === 'object') {
+        const innerArr =
+          parsed.questions || parsed.quiz || parsed.items || parsed.pairs || parsed.data;
+        const items = normalizeItems(innerArr);
+        if (items) return items;
+      }
+    }
+  }
+
+  // 3. Fallback regex extraction for object literals `{ "question": "...", "answer": "..." }`
+  const objPairRegex =
+    /["']?question["']?\s*:\s*["']((?:\\.|[^"'])+)["']\s*,\s*["']?answer["']?\s*:\s*["']((?:\\.|[^"'])+)["']/gi;
+  const regexItems = [];
+  let match;
+  while ((match = objPairRegex.exec(candidate)) !== null) {
+    const q = match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+    const a = match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+    if (q && a) {
+      regexItems.push({
+        id: `quiz-item-${regexItems.length + 1}`,
+        question: q,
+        answer: a,
+      });
+    }
+  }
+  if (regexItems.length > 0) {
+    return regexItems.slice(0, 3);
+  }
+
+  // 4. Fallback structured Q/A pairs (`Q1: ... A1: ...` or `Question 1: ... Answer: ...`)
+  const qaBlocks = candidate.split(
+    /(?:^|\n)(?=(?:\*\*?)?(?:Q(?:uestion)?\s*\d+|1\.|2\.|3\.)[:.)\s])/i
+  );
+  const qaItems = [];
+  for (const block of qaBlocks) {
+    const qaMatch = block.match(
+      /(?:\*\*?)?(?:Q(?:uestion)?\s*\d*|\d+\.)(?:\*\*?)?[:.)\s]+([\s\S]+?)\n+(?:\*\*?)?A(?:nswer)?\s*\d*(?:\*\*?)?[:.)\s]+([\s\S]+)/i
+    );
+    if (qaMatch) {
+      const q = qaMatch[1].trim();
+      const a = qaMatch[2].trim();
+      if (q && a) {
+        qaItems.push({
+          id: `quiz-item-${qaItems.length + 1}`,
+          question: q,
+          answer: a,
+        });
+      }
+    }
+  }
+  if (qaItems.length > 0) {
+    return qaItems.slice(0, 3);
+  }
+
+  throw new AiServiceError(
+    'MALFORMED_QUIZ',
+    'Could not read the generated quiz format. Click Retry to generate a fresh quiz.'
+  );
+}
+
+/**
+ * Study Hub — Generate a 3-bullet executive summary + key formulas from the current notes using Gemma 4.
+ */
+export async function generateNoteSummary({
+  noteContent = '',
+  noteTitle = '',
+  model = DEFAULT_AI_MODEL,
+  signal,
+}) {
+  const cleanNotes = stripNoteStylingSpans(noteContent);
+  if (!cleanNotes || cleanNotes.replace(/^#+\s*.*$/gm, '').trim().length === 0) {
+    throw new AiServiceError(
+      'EMPTY_NOTES',
+      'Your note is empty. Write some lecture notes or formulas first, then click Summarize Notes.'
+    );
+  }
+
+  const prompt = `These are my machine learning and mathematics study notes${
+    noteTitle ? ` titled "${noteTitle}"` : ''
+  }.
+Write:
+1. An executive summary consisting of EXACTLY three concise bullet points ("- ...").
+2. A "### Key Formulas" section containing the key mathematical formulas from the notes (using $...$ for inline math and $$...$$ for display math).
+
+Notes content:
+"""
+${cleanNotes}
+"""`;
+
+  const contents = [
+    {
+      role: 'user',
+      parts: [{ text: prompt }],
+    },
+  ];
+
+  const result = await callGeminiGenerateContent({
+    contents,
+    systemInstruction: STUDY_SUMMARY_SYSTEM_INSTRUCTION,
+    model,
+    temperature: 0.2,
+    maxOutputTokens: 1024,
+    signal,
+  });
+
+  const summaryMarkdown = cleanSummaryMarkdown(result.text);
+  if (!summaryMarkdown) {
+    throw new AiServiceError(
+      'EMPTY_RESPONSE',
+      'The model returned an empty summary. Please try again.'
+    );
+  }
+
+  return summaryMarkdown;
+}
+
+/**
+ * Study Hub — Generate a 3-question active-recall quiz from the current notes using Gemma 4.
+ */
+export async function generateNoteQuiz({
+  noteContent = '',
+  noteTitle = '',
+  model = DEFAULT_AI_MODEL,
+  signal,
+}) {
+  const cleanNotes = stripNoteStylingSpans(noteContent);
+  if (!cleanNotes || cleanNotes.replace(/^#+\s*.*$/gm, '').trim().length === 0) {
+    throw new AiServiceError(
+      'EMPTY_NOTES',
+      'Your note is empty. Write some lecture notes or formulas first, then click Quiz Me.'
+    );
+  }
+
+  const prompt = `Read the following machine learning / mathematics study notes${
+    noteTitle ? ` titled "${noteTitle}"` : ''
+  } and produce EXACTLY three active-recall question/answer pairs.
+Return ONLY a valid JSON array of 3 objects with "question" and "answer" keys, and no other text or commentary:
+[
+  { "question": "...", "answer": "..." },
+  { "question": "...", "answer": "..." },
+  { "question": "...", "answer": "..." }
+]
+
+Notes content:
+"""
+${cleanNotes}
+"""`;
+
+  const contents = [
+    {
+      role: 'user',
+      parts: [{ text: prompt }],
+    },
+  ];
+
+  const result = await callGeminiGenerateContent({
+    contents,
+    systemInstruction: STUDY_QUIZ_SYSTEM_INSTRUCTION,
+    model,
+    temperature: 0.25,
+    maxOutputTokens: 1024,
+    signal,
+  });
+
+  return parseQuizResponseDefensively(result.text);
 }

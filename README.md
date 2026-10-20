@@ -1,6 +1,6 @@
-# ML-Pad — Video & Notes Study Workspace
+# GemmaTH — Video & Notes Study Workspace
 
-ML-Pad is a browser-only study workspace built for CS and Machine Learning students taking math-heavy notes alongside video lectures. Watch a YouTube lecture or local video file on the left, take live-rendered Markdown + KaTeX notes on the right, capture exact video frames in one click, and transcribe formulas to LaTeX or ask follow-up questions with hosted Gemma 4 / Gemini vision models.
+GemmaTH is a browser-only study workspace built for CS and Machine Learning students taking math-heavy notes alongside video lectures. Watch a YouTube lecture or local video file on the left, take live-rendered Markdown + KaTeX notes on the right, capture exact video frames in one click, and transcribe formulas to LaTeX or ask follow-up questions with hosted Gemma 4 / Gemini vision models.
 
 ---
 
@@ -27,7 +27,7 @@ npm run build
 
 ## 2. Supplying Your Gemini API Key
 
-ML-Pad runs 100% in the browser with no backend server.
+GemmaTH runs 100% in the browser with no backend server.
 1. Click the **Settings (sliders)** icon in the top bar (or click the **Gemma 4** badge in the chat dock).
 2. In the **AI & API key** tab, paste your Google Gemini API key (`AIzaSy...`) and click **Save key**.
 3. Your key stays only in your browser (`localStorage` key `mlpad.secret.apiKey`). It is never logged, never included in exported Markdown/PDF files, and never sent anywhere except directly to `https://generativelanguage.googleapis.com`.
@@ -44,14 +44,14 @@ ML-Pad runs 100% in the browser with no backend server.
 
 ### YouTube Videos (Browser Tab Capture)
 Because YouTube embeds run inside a cross-origin `<iframe>`, browser security prevents reading pixels directly from the iframe.
-- On your first click of **Capture frame**, ML-Pad requests screen-sharing permission for **This Tab** (`navigator.mediaDevices.getDisplayMedia` with `preferCurrentTab: true`).
-- ML-Pad verifies that you selected a browser tab (not a whole monitor or separate window) and keeps the capture stream warm for your session.
+- On your first click of **Capture frame**, GemmaTH requests screen-sharing permission for **This Tab** (`navigator.mediaDevices.getDisplayMedia` with `preferCurrentTab: true`).
+- GemmaTH verifies that you selected a browser tab (not a whole monitor or separate window) and keeps the capture stream warm for your session.
 - Every subsequent click on **Capture frame** grabs a fresh frame and crops it to the exact bounding box of the video player in ~45ms with **no further prompts**, accounting for window size, browser zoom, Retina/HiDPI scaling, and scroll position.
 - Enable the **`→ LaTeX`** toggle next to **Capture frame** to automatically transcribe the captured frame's formula directly into your note at the cursor.
 
 ### Local Video Files & Fallbacks (Zero Permission Required)
 - **Local Video Files:** Click **Local video** next to the URL bar to open any `.mp4` or `.webm` lecture file from your computer. Frame capture on local videos reads directly from the HTML5 `<video>` element with zero permissions required.
-- **Clipboard Paste (`Ctrl+V` / `Cmd+V`):** Take an OS screenshot (`Win+Shift+S` or `Cmd+Shift+4`) and press `Ctrl+V` anywhere in ML-Pad to add the image to the tray and optionally snap it to LaTeX.
+- **Clipboard Paste (`Ctrl+V` / `Cmd+V`):** Take an OS screenshot (`Win+Shift+S` or `Cmd+Shift+4`) and press `Ctrl+V` anywhere in GemmaTH to add the image to the tray and optionally snap it to LaTeX.
 - **Drag & Drop / File Upload:** Drag any image onto the Captured Frames tray or click the **Upload image** tile.
 - **Sample Math Slide:** In the frames tray or fallback banner, click **Load sample math frame** to generate a crisp Gradient Descent lecture slide for testing AI transcription offline or on mobile browsers.
 
@@ -76,4 +76,4 @@ Because YouTube embeds run inside a cross-origin `<iframe>`, browser security pr
 ## 6. Known Limitations
 
 - **Browser Support for Tab Capture:** `getDisplayMedia` with tab sharing works best on desktop Chromium browsers (Chrome, Edge, Brave) over HTTPS or `localhost`. Firefox and Safari users (or mobile users) can use the **Local video**, **Paste screenshot (`Ctrl+V`)**, or **Upload image** flows, which feed the exact same tray and AI pipeline.
-- **YouTube Embed Restrictions:** Some YouTube videos disable third-party embedding by creator setting; ML-Pad detects this and displays a fallback prompt to paste another link or open a local video file.
+- **YouTube Embed Restrictions:** Some YouTube videos disable third-party embedding by creator setting; GemmaTH detects this and displays a fallback prompt to paste another link or open a local video file.

@@ -7,6 +7,7 @@ import {
   CheckIcon,
   ClockIcon,
   SigmaIcon,
+  StudyBookIcon,
 } from './Icons';
 import { NOTE_INKS, normalizeInkKey } from '../lib/contrast';
 
@@ -28,6 +29,7 @@ export function NoteToolbar({
   onInsertImageClick,
   onInsertTimestampClick,
   onOpenFormulaPalette,
+  onOpenStudyHub,
   currentTimeStr = '00:00',
 }) {
   const currentFontObj = FONT_OPTIONS.find((f) => f.value === noteFont) || FONT_OPTIONS[0];
@@ -118,7 +120,6 @@ export function NoteToolbar({
                         aria-checked={isSelected}
                         aria-label={`${ink.label} ink`}
                         onMouseDown={(e) => {
-                          // Prevent stealing focus / collapsing text selection in editor
                           e.preventDefault();
                         }}
                         onClick={() => onInkChange && onInkChange(key)}
@@ -156,8 +157,42 @@ export function NoteToolbar({
           </div>
         </div>
 
-        {/* Right controls: Timestamp + Formula + Upload Image to Tray */}
+        {/* Right controls: Study Hub + Timestamp + Formula + Upload Image to Tray */}
         <div className="flex items-center gap-2">
+          {/* Study Hub Button */}
+          {onOpenStudyHub && (
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <button
+                  id="note-toolbar-study-hub-btn"
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={onOpenStudyHub}
+                  aria-label="Open Study Hub (Summarize Notes & Quiz Me)"
+                  className="inline-flex items-center gap-1.5 h-[30px] px-2.5 rounded-[6px] text-[12.5px] font-medium text-[var(--tx)] hover:bg-[var(--rz)] transition-colors cursor-pointer"
+                  style={{ border: '1px solid var(--bd2)' }}
+                >
+                  <StudyBookIcon size={14} className="text-[var(--accent-text)]" />
+                  <span>Study Hub</span>
+                </button>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content
+                  side="top"
+                  sideOffset={4}
+                  className="z-50 px-2 py-1 text-[11px] rounded-[4px]"
+                  style={{
+                    backgroundColor: 'var(--rz)',
+                    color: 'var(--tx)',
+                    border: '1px solid var(--bd2)',
+                  }}
+                >
+                  Study Hub: Summarize notes &amp; active-recall quiz
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          )}
+
           {/* Insert Timestamp Button */}
           {onInsertTimestampClick && (
             <Tooltip.Root>

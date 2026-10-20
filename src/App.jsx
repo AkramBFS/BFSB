@@ -10,6 +10,7 @@ import { NotesPane } from './components/NotesPane';
 import { ChatDock } from './components/ChatDock';
 import { SettingsDialog } from './components/SettingsDialog';
 import { FrameViewerDialog } from './components/FrameViewerDialog';
+import { StudyHubDrawer } from './components/StudyHubDrawer';
 import { evaluateCustomTheme } from './lib/contrast';
 import { formatSeconds } from './lib/youtube';
 import { compressImageDataUrl, saveFrameMedia } from './lib/storage';
@@ -47,6 +48,7 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('ai');
+  const [studyHubOpen, setStudyHubOpen] = useState(false);
   const [inspectedFrame, setInspectedFrame] = useState(null);
   const [chatAttachedFrame, setChatAttachedFrame] = useState(null);
   const [transcribingFrameId, setTranscribingFrameId] = useState(null);
@@ -420,6 +422,7 @@ export default function App() {
         frames={frames}
         mediaById={mediaById}
         onOpenSettings={openSettingsModal}
+        onOpenStudyHub={() => setStudyHubOpen(true)}
         lectureSubtitle={videoState?.title || 'Machine learning / Study workspace'}
       />
 
@@ -489,6 +492,7 @@ export default function App() {
             youtubeUrl={youtubeUrl}
             aiModel={aiModel}
             onRequireApiKey={() => openSettingsModal('ai')}
+            onOpenStudyHub={() => setStudyHubOpen(true)}
           />
 
           <ChatDock
@@ -546,6 +550,17 @@ export default function App() {
         isTranscribing={
           Boolean(inspectedFrame && transcribingFrameId === inspectedFrame.id)
         }
+      />
+
+      {/* AI Study Hub Slide-out Drawer (Summary + Active-Recall Quiz powered by Gemma 4) */}
+      <StudyHubDrawer
+        open={studyHubOpen}
+        onOpenChange={setStudyHubOpen}
+        activeTab={activeTab}
+        aiModel={aiModel}
+        noteFont={noteFont}
+        onOpenAiSettings={() => openSettingsModal('ai')}
+        onInsertIntoNote={handleInsertReplyToNote}
       />
     </div>
   );

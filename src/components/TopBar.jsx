@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { LogoMark, SaveIcon, SettingsIcon } from './Icons';
+import { LogoMark, SaveIcon, SettingsIcon, StudyBookIcon } from './Icons';
 import { ThemeToggle } from './ThemeToggle';
 import { ExportMenu } from './ExportMenu';
 import { useToast } from './ToastContext';
@@ -16,6 +16,8 @@ export function TopBar({
   mediaById = {},
   onPreparePrint,
   onOpenSettings,
+  onOpenStudyHub,
+  studyHubOpen = false,
   lectureSubtitle = 'Machine learning / Study workspace',
 }) {
   const { showToast } = useToast();
@@ -61,7 +63,7 @@ export function TopBar({
               className="text-[21px] font-medium tracking-tight text-[var(--tx)]"
               style={{ fontFamily: 'var(--font-serif)' }}
             >
-              ML-Pad
+              GemmaTH
             </span>
           </div>
 
@@ -93,6 +95,27 @@ export function TopBar({
           >
             {saveStatus}
           </span>
+
+          {onOpenStudyHub && (
+            <button
+              id="topbar-study-hub-btn"
+              type="button"
+              aria-pressed={studyHubOpen}
+              onClick={onOpenStudyHub}
+              aria-label="Open Study Hub (Summarize Notes & Quiz Me)"
+              className="inline-flex items-center gap-1.5 h-[34px] px-3 rounded-[6px] text-[13px] font-medium transition-colors cursor-pointer hover:bg-[var(--rz)]"
+              style={{
+                backgroundColor: studyHubOpen ? 'var(--rz)' : 'transparent',
+                color: 'var(--tx)',
+                border: studyHubOpen
+                  ? '1px solid var(--accent)'
+                  : '1px solid var(--bd2)',
+              }}
+            >
+              <StudyBookIcon size={15} className="text-[var(--accent-text)]" />
+              <span>Study Hub</span>
+            </button>
+          )}
 
           <ThemeToggle theme={theme} onChange={onThemeChange} />
 

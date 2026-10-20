@@ -25,6 +25,13 @@ import {
   reconcileCharStylesOnEdit,
 } from './noteDocument.js';
 import { extractReferencedFrameIds } from '../hooks/useDebouncedLocalStorage.js';
+import {
+  stripNoteStylingSpans,
+  cleanSummaryMarkdown,
+  parseQuizResponseDefensively,
+  generateNoteSummary,
+  generateNoteQuiz,
+} from './aiService.js';
 
 describe('YouTube URL Parsing & Timestamp Utilities', () => {
   it('parses standard watch URLs with start time', () => {
@@ -229,5 +236,98 @@ describe('Markdown Export & Persistent Note Image Resolution', () => {
     expect(refs.has('img-2')).toBe(true);
     expect(refs.has('img-3')).toBe(true);
     expect(refs.has('img-4')).toBe(false);
+  });
+});
+
+describe('AI Study Hub — Defensive Quiz Parser, Summary Cleaner & Note Validation', () => {
+  it('strips inline styling spans from stored note content while preserving markdown and math', () => {
+    const raw =
+      '# Gradient Descent\n\nUpdate <span data-ink="cobalt" data-font="Lora">rule</span>: $$\\theta := \\theta - \\alpha \\nabla J(\\theta)$$';
+    expect(stripNoteStylingSpans(raw)).toBe(
+      '# Gradient Descent\n\nUpdate rule: $$\\theta := \\theta - \\alpha \\nabla J(\\theta)$$'
+    );
+  });
+
+  it('strips outer markdown code fences from summary output if present', () => {
+    const fenced =
+      '```markdown\n- Point 1\n- Point 2\n- Point 3\n\n### Key Formulas\n$$J(\\theta)$$\n```';
+    expect(cleanSummaryMarkdown(fenced)).toBe(
+      '- Point 1\n- Point 2\n- Point 3\n\n### Key Formulas\n$$J(\\theta)$$'
+    );
+  });
+
+  it('parses clean machine-readable JSON array of 3 quiz Q&A pairs', () => {
+    const json = JSON.stringify([
+      {
+        question: 'What does $\\alpha$ control in gradient descent?',
+        answer: 'The step size taken opposite to $\\nabla_\\theta J(\\theta)$.',
+      },
+      {
+        question: 'Why is the $1/(2m)$ factor included in MSE?',
+        answer: 'So the factor of $2$ cancels when differentiating the squared error.',
+      },
+      {
+        question: 'When does gradient descent converge to a stationary point?',
+        answer: 'When $\\nabla J(\\theta) = 0$.',
+      },
+    ]);
+    const items = parseQuizResponseDefensively(json);
+    expect(items).toHaveLength(3);
+    expect(items[0].id).toBe('quiz-item-1');
+    expect(items[0].question).toContain('$\\alpha$');
+    expect(items[1].answer).toContain('differentiating');
+  });
+
+  it('tolerates markdown code fences, surrounding prose, wrapper objects, and single-backslash LaTeX in JSON', () => {
+    const polluted = `Here is your 3-question active-recall quiz based on the notes:
+\`\`\`json
+{
+  "quiz": [
+    {
+      "question": "Write the update rule for $\\theta_j$.",
+      "answer": "$$\\theta_j := \\theta_j - \\alpha \\frac{\\partial}{\\partial \\theta_j} J(\\theta)$$"
+    },
+    {
+      "question": "What happens if $\\alpha$ is too large?",
+      "answer": "The iterate can overshoot the minimum and diverge."
+    },
+    {
+      "question": "Define the residual error for example $i$.",
+      "answer": "The difference $h_\\theta(x^{(i)}) - y^{(i)}$."
+    }
+  ]
+}
+\`\`\`
+Hope this helps!`;
+    const items = parseQuizResponseDefensively(polluted);
+    expect(items).toHaveLength(3);
+    expect(items[0].question).toContain('\\theta_j');
+    expect(items[0].answer).toContain('\\frac{\\partial}{\\partial \\theta_j}');
+    expect(items[2].answer).toContain('h_\\theta');
+  });
+
+  it('parses structured Q1/A1 fallback blocks and throws MALFORMED_QUIZ on unparseable output', () => {
+    const qaText = `Q1: What is the gradient of $J(\\theta)$?
+A1: The vector of partial derivatives $\\nabla_\\theta J(\\theta)$.
+
+Q2: What is the learning rate?
+A2: The positive scalar $\\alpha$.`;
+    const fallbackItems = parseQuizResponseDefensively(qaText);
+    expect(fallbackItems).toHaveLength(2);
+    expect(fallbackItems[0].question).toContain('gradient');
+
+    expect(() => parseQuizResponseDefensively('Sorry, I cannot help with that.')).toThrowError(
+      /Could not read the generated quiz format/
+    );
+  });
+
+  it('rejects empty or heading-only notes before making any AI network request', async () => {
+    await expect(
+      generateNoteSummary({ noteContent: '   ', noteTitle: 'Empty' })
+    ).rejects.toMatchObject({ code: 'EMPTY_NOTES' });
+
+    await expect(
+      generateNoteQuiz({ noteContent: '# Untitled note\n\n   ', noteTitle: 'Untitled' })
+    ).rejects.toMatchObject({ code: 'EMPTY_NOTES' });
   });
 });

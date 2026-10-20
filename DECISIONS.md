@@ -1,4 +1,4 @@
-# ML-Pad — Technical Decisions (`DECISIONS.md`)
+# GemmaTH — Technical Decisions (`DECISIONS.md`)
 
 This document records the architectural decisions made where the product specification left design choices open.
 
@@ -57,3 +57,16 @@ This document records the architectural decisions made where the product specifi
 - **Hybrid Persistence:** `localStorage` (`mlpad.schemaVersion = 2`) stores lightweight workspace state with a 500ms debounce, while IndexedDB (`mlpad_media_db`) stores compressed JPEG frame media.
 - **Gemini / Hosted Gemma 4 Vision API:** Direct REST `fetch` calls to `generateContent` with `gemma-4-31b-it` as default, automatic fallback for inline `systemInstruction`, and strict `localStorage` isolation for `mlpad.secret.apiKey`.
 - **Zero New Runtime Dependencies:** All five fixes and visual refinements are implemented within the existing React + Vite + Tailwind + Radix + KaTeX stack.
+
+
+---
+
+## 6. AI Study Hub — Summary & Active-Recall Quiz (`src/components/StudyHubDrawer.jsx`, `src/lib/aiService.js`)
+
+**Decision:** A slide-out right-hand drawer built on `@radix-ui/react-dialog` and `@radix-ui/react-accordion`, accessible from both the `NoteToolbar` (**Study Hub**) and `TopBar` (**Study Hub**), reusing the app's existing Gemma 4 (`gemma-4-31b-it` default) client (`callGeminiGenerateContent`), API key / `.env` configuration (`getApiKey`, `getCustomGemmaEndpoint`), and Markdown + KaTeX rendering pipeline (`ReactMarkdown` + `remark-math` + `rehype-katex`).
+
+**Reasoning:**
+- **Summary Generation (`generateNoteSummary`):** Strips inline `<span data-ink data-font>` styling tags (`stripNoteStylingSpans`), validates that the note is non-empty before calling the network, instructs Gemma 4 to produce **three executive-summary bullet points** followed by a **Key Formulas** section in Markdown + KaTeX (`$...$` / `$$...$$`), and strips any outer markdown fences (`cleanSummaryMarkdown`). Includes one-click **Copy** and **Insert in note** actions.
+- **Quiz Generation & Defensive Parsing (`generateNoteQuiz`, `parseQuizResponseDefensively`):** Instructs Gemma 4 to output strictly machine-readable JSON (`[{ "question": "...", "answer": "..." }, ...]`). `parseQuizResponseDefensively` handles code fences, surrounding prose, wrapper objects (`{ quiz: [...] }` / `{ questions: [...] }`), single-backslash LaTeX sequences inside JSON strings (e.g. `\theta`, `\frac`, `\nabla` that `JSON.parse` would otherwise corrupt into control characters), object-literal regex fallback, and structured `Q1:/A1:` blocks, surfacing a clean `MALFORMED_QUIZ` error with **Retry** if the output is unusable.
+- **Interactive Active-Recall Accordion (`src/components/ui/Accordion.jsx`):** Uses `@radix-ui/react-accordion` (`type="multiple"`) with all answers collapsed initially so the student can attempt each question before revealing the answer. Both questions and answers render full Markdown and KaTeX math.
+- **Per-Tab Session Scoping & Request Cancellation:** Study Hub results are keyed by `activeTab.id` (`resultsByTabId[tabId]`). Switching note tabs or closing the drawer aborts any in-flight `AbortController` request and scopes displayed results to the active note tab so stale output never leaks across tabs.

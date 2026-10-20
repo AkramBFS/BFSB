@@ -1,4 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
 import katex from 'katex';
 import { parseTimestampToSeconds } from '../lib/youtube';
 import { NOTE_FONT_FAMILIES } from '../lib/noteDocument';
@@ -272,7 +280,15 @@ function tokenizeInline(rawText, sliceStart, sliceEnd) {
  * Render a text slice `[start, end)` with per-character `{ ink, font }` runs so
  * every styled word/character displays in its chosen fountain-pen ink and font.
  */
-function renderStyledSlice(rawText, start, end, charStyles, defaultFont, extraClassName = '') {
+function renderStyledSlice(
+  rawText,
+  start,
+  end,
+  charStyles,
+  defaultFont,
+  extraClassName = '',
+  forceFontFamily = null
+) {
   if (end <= start) return null;
   const segments = [];
   let i = start;
@@ -295,7 +311,11 @@ function renderStyledSlice(rawText, start, end, charStyles, defaultFont, extraCl
   }
 
   return segments.map((seg) => {
-    const fontFamily = NOTE_FONT_FAMILIES[seg.font] || NOTE_FONT_FAMILIES[defaultFont] || NOTE_FONT_FAMILIES.Newsreader;
+    const fontFamily =
+      forceFontFamily ||
+      NOTE_FONT_FAMILIES[seg.font] ||
+      NOTE_FONT_FAMILIES[defaultFont] ||
+      NOTE_FONT_FAMILIES.Newsreader;
     return (
       <span
         key={seg.start}
@@ -314,6 +334,91 @@ function renderStyledSlice(rawText, start, end, charStyles, defaultFont, extraCl
   });
 }
 
+function resolveBoundaryOffset(node, offset, containerEl, isEnd = false) {
+  if (!node || !containerEl) return null;
+  if (node.nodeType === 3) {
+    const spanEl = node.parentElement?.closest?.('[data-char-start]');
+    if (spanEl && containerEl.contains(spanEl)) {
+      const charStart = Number(spanEl.getAttribute('data-char-start'));
+      const charEnd = Number(spanEl.getAttribute('data-char-end'));
+      if (!Number.isNaN(charStart) && !Number.isNaN(charEnd)) {
+        return Math.min(charEnd, Math.max(charStart, charStart + offset));
+      }
+    }
+    const blockEl = node.parentElement?.closest?.('[data-block-start]');
+    if (blockEl && containerEl.contains(blockEl)) {
+      const bStart = Number(blockEl.getAttribute('data-block-start'));
+      const bEnd = Number(blockEl.getAttribute('data-block-end'));
+      return isEnd ? bEnd : bStart;
+    }
+    return null;
+  }
+  if (node.nodeType === 1) {
+    const el = node;
+    const spanEl = el.closest?.('[data-char-start]');
+    if (spanEl && containerEl.contains(spanEl)) {
+      const charStart = Number(spanEl.getAttribute('data-char-start'));
+      const charEnd = Number(spanEl.getAttribute('data-char-end'));
+      return isEnd ? charEnd : charStart;
+    }
+    const childCount = el.childNodes?.length || 0;
+    if (childCount > 0) {
+      const childIdx = isEnd
+        ? Math.max(0, Math.min(childCount - 1, offset - 1))
+        : Math.max(0, Math.min(childCount - 1, offset));
+      const child = el.childNodes[childIdx];
+      if (child) {
+        const childSpan =
+          child.nodeType === 1
+            ? child.matches?.('[data-char-start]')
+              ? child
+              : child.querySelector?.('[data-char-start]')
+            : child.parentElement?.closest?.('[data-char-start]');
+        if (childSpan && containerEl.contains(childSpan)) {
+          const charStart = Number(childSpan.getAttribute('data-char-start'));
+          const charEnd = Number(childSpan.getAttribute('data-char-end'));
+          return isEnd ? charEnd : charStart;
+        }
+      }
+    }
+    const blockEl = el.closest?.('[data-block-start]');
+    if (blockEl && containerEl.contains(blockEl)) {
+      const bStart = Number(blockEl.getAttribute('data-block-start'));
+      const bEnd = Number(blockEl.getAttribute('data-block-end'));
+      return isEnd ? bEnd : bStart;
+    }
+  }
+  return null;
+}
+
+function resolveDomSelectionInContainer(containerEl) {
+  if (typeof window === 'undefined' || !window.getSelection || !containerEl) return null;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!containerEl.contains(range.commonAncestorContainer)) return null;
+  const start = resolveBoundaryOffset(
+    range.startContainer,
+    range.startOffset,
+    containerEl,
+    false
+  );
+  const end = resolveBoundaryOffset(
+    range.endContainer,
+    range.endOffset,
+    containerEl,
+    true
+  );
+  if (typeof start === 'number' && typeof end === 'number') {
+    return {
+      start: Math.min(start, end),
+      end: Math.max(start, end),
+      isCollapsed: sel.isCollapsed || start === end,
+    };
+  }
+  return null;
+}
+
 /**
  * Obsidian-style single-surface Live Note Editor.
  * - Everything is rendered in place and editable in place.
@@ -325,25 +430,30 @@ function renderStyledSlice(rawText, start, end, charStyles, defaultFont, extraCl
  * - Images appear in place as blocks with editable captions, keyboard selection/deletion, and a hover/focus remove button.
  * - Timestamps render as clickable links that seek the video, while allowing normal caret placement around them.
  */
-export function LiveNoteEditor({
-  rawText = '',
-  charStyles = [],
-  defaultFont = 'Newsreader',
-  activeTypingStyle = { ink: 'default', font: 'Newsreader' },
-  cursorStart = 0,
-  onChangeDocument,
-  onSelectRange,
-  onSeekTimestamp,
-  onInspectFrame,
-  frames = [],
-  mediaById = {},
-  onKeyDown,
-  onPasteImageFile,
-}) {
+export const LiveNoteEditor = forwardRef(function LiveNoteEditor(
+  {
+    rawText = '',
+    charStyles = [],
+    defaultFont = 'Newsreader',
+    activeTypingStyle = { ink: 'default', font: 'Newsreader' },
+    cursorStart = 0,
+    cursorEnd = 0,
+    onChangeDocument,
+    onSelectRange,
+    onSeekTimestamp,
+    onInspectFrame,
+    frames = [],
+    mediaById = {},
+    onKeyDown,
+    onPasteImageFile,
+  },
+  ref
+) {
   const [editingBlockStart, setEditingBlockStart] = useState(null);
   const [isSurfaceFocused, setIsSurfaceFocused] = useState(false);
   const [selectedImageBlockStart, setSelectedImageBlockStart] = useState(null);
 
+  const containerRef = useRef(null);
   const activeInputRef = useRef(null);
   const pendingFocusOffsetRef = useRef(null);
 
@@ -360,6 +470,29 @@ export function LiveNoteEditor({
     }
     return blocks[blocks.length - 1] || null;
   }, [blocks, cursorStart, editingBlockStart, isSurfaceFocused]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getCurrentSelectionRange: () => {
+        if (
+          activeBlock &&
+          activeInputRef.current &&
+          document.activeElement === activeInputRef.current
+        ) {
+          const s = activeBlock.start + (activeInputRef.current.selectionStart ?? 0);
+          const e = activeBlock.start + (activeInputRef.current.selectionEnd ?? 0);
+          return [Math.min(s, e), Math.max(s, e)];
+        }
+        const domSel = resolveDomSelectionInContainer(containerRef.current);
+        if (domSel && !domSel.isCollapsed && domSel.end > domSel.start) {
+          return [domSel.start, domSel.end];
+        }
+        return [cursorStart, cursorEnd];
+      },
+    }),
+    [activeBlock, cursorEnd, cursorStart]
+  );
 
   // Focus and position caret inside the active block's editable input/textarea when activated
   useEffect(() => {
@@ -380,7 +513,7 @@ export function LiveNoteEditor({
       el.setSelectionRange(localStart, localEnd);
       pendingFocusOffsetRef.current = null;
     }
-  }, [activeBlock]);
+  }, [activeBlock, editingBlockStart]);
 
   // Auto-resize active textarea height to fit content seamlessly
   useEffect(() => {
@@ -606,9 +739,50 @@ export function LiveNoteEditor({
     }
   };
 
+  const handleRenderedClick = useCallback(
+    (e, fallbackOffset) => {
+      e.stopPropagation();
+      const domSel = resolveDomSelectionInContainer(containerRef.current);
+      if (domSel && !domSel.isCollapsed && domSel.end > domSel.start) {
+        // User just finished dragging a highlight selection; keep the selection range!
+        return;
+      }
+      const targetOffset =
+        domSel && typeof domSel.start === 'number' ? domSel.start : fallbackOffset;
+      activateBlockAtOffset(targetOffset, targetOffset);
+    },
+    [activateBlockAtOffset]
+  );
+
+  const handleContainerMouseUp = useCallback(() => {
+    if (
+      activeInputRef.current &&
+      document.activeElement === activeInputRef.current
+    ) {
+      return;
+    }
+    const domSel = resolveDomSelectionInContainer(containerRef.current);
+    if (!domSel || domSel.isCollapsed || domSel.end <= domSel.start) return;
+
+    // Check if selection is contained within a single editable text block
+    const singleBlock = blocks.find(
+      (b) =>
+        domSel.start >= b.start &&
+        domSel.end <= b.end &&
+        b.type !== 'math-block' &&
+        b.type !== 'image-block'
+    );
+    if (singleBlock) {
+      activateBlockAtOffset(domSel.start, domSel.end);
+    } else {
+      onSelectRange(domSel.start, domSel.end);
+    }
+  }, [activateBlockAtOffset, blocks, onSelectRange]);
+
   /**
    * Render inline tokens for a non-active block (or inactive tokens of a line).
-   * Clicking any token places the caret directly into that token's character position.
+   * Clicking any token places the caret directly into that token's character position,
+   * while dragging across tokens preserves the highlighted selection.
    */
   const renderInlineTokens = (sliceStart, sliceEnd) => {
     if (sliceEnd <= sliceStart) return null;
@@ -619,10 +793,7 @@ export function LiveNoteEditor({
         return (
           <span
             key={tok.start}
-            onClick={(e) => {
-              e.stopPropagation();
-              activateBlockAtOffset(tok.end, tok.end);
-            }}
+            onClick={(e) => handleRenderedClick(e, tok.end)}
           >
             {renderStyledSlice(rawText, tok.start, tok.end, charStyles, defaultFont)}
           </span>
@@ -634,10 +805,7 @@ export function LiveNoteEditor({
           <strong
             key={tok.start}
             className="font-semibold"
-            onClick={(e) => {
-              e.stopPropagation();
-              activateBlockAtOffset(tok.innerEnd, tok.innerEnd);
-            }}
+            onClick={(e) => handleRenderedClick(e, tok.innerEnd)}
           >
             {renderStyledSlice(rawText, tok.innerStart, tok.innerEnd, charStyles, defaultFont)}
           </strong>
@@ -649,10 +817,7 @@ export function LiveNoteEditor({
           <em
             key={tok.start}
             className="italic"
-            onClick={(e) => {
-              e.stopPropagation();
-              activateBlockAtOffset(tok.innerEnd, tok.innerEnd);
-            }}
+            onClick={(e) => handleRenderedClick(e, tok.innerEnd)}
           >
             {renderStyledSlice(rawText, tok.innerStart, tok.innerEnd, charStyles, defaultFont)}
           </em>
@@ -663,10 +828,9 @@ export function LiveNoteEditor({
         return (
           <code
             key={tok.start}
-            onClick={(e) => {
-              e.stopPropagation();
-              activateBlockAtOffset(tok.innerEnd, tok.innerEnd);
-            }}
+            data-char-start={tok.innerStart}
+            data-char-end={tok.innerEnd}
+            onClick={(e) => handleRenderedClick(e, tok.innerEnd)}
             className="px-1.5 py-0.5 rounded-[4px] text-[14.5px] font-mono"
             style={{
               backgroundColor: 'var(--rz)',
@@ -674,13 +838,22 @@ export function LiveNoteEditor({
               fontFamily: 'var(--font-mono)',
             }}
           >
-            {tok.inner}
+            {renderStyledSlice(
+              rawText,
+              tok.innerStart,
+              tok.innerEnd,
+              charStyles,
+              defaultFont,
+              '',
+              'var(--font-mono)'
+            )}
           </code>
         );
       }
 
       if (tok.type === 'inline-math') {
         const { html, error } = renderLatexSafely(tok.latex, false);
+        const mathInk = charStyles[tok.start]?.ink || 'default';
         if (error) {
           return (
             <button
@@ -701,6 +874,8 @@ export function LiveNoteEditor({
         return (
           <span
             key={tok.start}
+            data-char-start={tok.start}
+            data-char-end={tok.end}
             role="button"
             tabIndex={0}
             aria-label={`Inline formula ${tok.latex}. Click to edit LaTeX.`}
@@ -715,6 +890,9 @@ export function LiveNoteEditor({
               }
             }}
             className="inline-block px-0.5 rounded-[3px] hover:bg-[var(--rz)] cursor-text transition-colors"
+            style={{
+              color: mathInk !== 'default' ? `var(--ink-${mathInk}, var(--tx))` : undefined,
+            }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
         );
@@ -727,6 +905,8 @@ export function LiveNoteEditor({
           return (
             <span
               key={tok.start}
+              data-char-start={tok.start}
+              data-char-end={tok.end}
               className="inline-flex items-center gap-0.5 mx-0.5 align-baseline"
             >
               <button
@@ -763,7 +943,12 @@ export function LiveNoteEditor({
         }
 
         return (
-          <span key={tok.start} className="inline-flex items-baseline gap-1">
+          <span
+            key={tok.start}
+            data-char-start={tok.start}
+            data-char-end={tok.end}
+            className="inline-flex items-baseline gap-1"
+          >
             <a
               href={tok.href}
               target="_blank"
@@ -842,22 +1027,35 @@ export function LiveNoteEditor({
     }
   };
 
-  const activeBlockStyle = useMemo(() => {
+  const getBlockTextSizing = (blockType) => {
+    switch (blockType) {
+      case 'h1':
+        return 'text-[30px] md:text-[34px] font-normal tracking-tight leading-tight';
+      case 'h2':
+        return 'text-[22px] md:text-[24px] font-normal tracking-tight leading-snug';
+      case 'h3':
+        return 'text-[18.5px] font-medium leading-snug';
+      case 'blockquote':
+        return 'text-[16px] leading-relaxed';
+      default:
+        return 'text-[17px] leading-[1.65]';
+    }
+  };
+
+  const activeBlockFontFamily = useMemo(() => {
     const fontKey = activeTypingStyle?.font || defaultFont || 'Newsreader';
-    const inkKey = activeTypingStyle?.ink || 'default';
-    return {
-      fontFamily: NOTE_FONT_FAMILIES[fontKey] || NOTE_FONT_FAMILIES.Newsreader,
-      color: `var(--ink-${inkKey}, var(--tx))`,
-    };
-  }, [activeTypingStyle, defaultFont]);
+    return NOTE_FONT_FAMILIES[fontKey] || NOTE_FONT_FAMILIES.Newsreader;
+  }, [activeTypingStyle?.font, defaultFont]);
 
   return (
     <div
+      ref={containerRef}
       id="note-page-content"
       role="textbox"
       aria-multiline="true"
       aria-label="Live note editor"
       tabIndex={-1}
+      onMouseUp={handleContainerMouseUp}
       onPaste={(e) => {
         const items = e.clipboardData?.items;
         if (!items || !onPasteImageFile) return;
@@ -874,6 +1072,8 @@ export function LiveNoteEditor({
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
+          const domSel = resolveDomSelectionInContainer(containerRef.current);
+          if (domSel && !domSel.isCollapsed && domSel.end > domSel.start) return;
           activateBlockAtOffset(rawText.length, rawText.length);
         }
       }}
@@ -1125,30 +1325,60 @@ export function LiveNoteEditor({
         }
 
         // 3. Active Line Editing (Headings, Callouts/Blockquotes, Lists, Paragraphs)
-        // Reveals raw markdown syntax ONLY on this active line while keeping the block's live visual typography!
+        // Reveals raw markdown syntax ONLY on this active line while rendering per-character ink colors permanently!
         if (isEditingThisBlock) {
           const typographyClass = getBlockTypography(block.type);
+          const textSizingClass = getBlockTextSizing(block.type);
           return (
             <div
               key={block.id}
-              className={block.type === 'blockquote' ? typographyClass : 'my-0.5'}
+              data-block-start={block.start}
+              data-block-end={block.end}
+              className={`relative grid ${typographyClass}`}
               style={
                 block.type === 'blockquote'
                   ? { backgroundColor: 'var(--callout-bg)', color: 'var(--tx)' }
                   : undefined
               }
             >
+              {/* Per-character styled backdrop so highlighted/colored words keep their permanent color while editing */}
+              <div
+                aria-hidden="true"
+                dir="auto"
+                className={`w-full pointer-events-none select-none whitespace-pre-wrap break-words overflow-hidden p-0 m-0 ${textSizingClass}`}
+                style={{
+                  gridArea: '1 / 1',
+                  fontFamily: activeBlockFontFamily,
+                }}
+              >
+                {block.raw ? (
+                  <>
+                    {renderStyledSlice(
+                      rawText,
+                      block.start,
+                      block.end,
+                      charStyles,
+                      defaultFont,
+                      '',
+                      activeBlockFontFamily
+                    )}
+                    {block.raw.endsWith('\n') ? '\n ' : ''}
+                  </>
+                ) : blockIdx === 0 && blocks.length === 1 ? (
+                  <span className="text-[var(--mu)]">
+                    Type notes, / for ML formulas, or $...$ for math...
+                  </span>
+                ) : (
+                  <span>&nbsp;</span>
+                )}
+              </div>
+
               <textarea
                 ref={activeInputRef}
                 dir="auto"
                 rows={1}
                 value={block.raw}
                 aria-label="Edit note line"
-                placeholder={
-                  blockIdx === 0 && blocks.length === 1 && !block.raw
-                    ? 'Type notes, / for ML formulas, or $...$ for math...'
-                    : ''
-                }
                 onChange={(e) => {
                   const nextVal = e.target.value;
                   const selS = e.target.selectionStart ?? nextVal.length;
@@ -1164,10 +1394,13 @@ export function LiveNoteEditor({
                   setEditingBlockStart(null);
                 }}
                 onKeyDown={(e) => handleBlockInputKeyDown(e, block, blockIdx)}
-                className={`w-full bg-transparent outline-none resize-none overflow-hidden block ${
-                  block.type === 'blockquote' ? 'text-[16px] leading-relaxed' : typographyClass
-                }`}
-                style={activeBlockStyle}
+                className={`live-note-overlay-textarea w-full bg-transparent outline-none resize-none overflow-hidden block whitespace-pre-wrap break-words p-0 m-0 border-0 ${textSizingClass}`}
+                style={{
+                  gridArea: '1 / 1',
+                  fontFamily: activeBlockFontFamily,
+                  color: 'transparent',
+                  caretColor: 'var(--tx)',
+                }}
               />
             </div>
           );
@@ -1181,8 +1414,10 @@ export function LiveNoteEditor({
           return (
             <HeadingTag
               key={block.id}
+              data-block-start={block.start}
+              data-block-end={block.end}
               dir="auto"
-              onClick={() => activateBlockAtOffset(block.end, block.end)}
+              onClick={(e) => handleRenderedClick(e, block.end)}
               className={`${typographyClass} cursor-text`}
             >
               {renderInlineTokens(block.bodyStart, block.end)}
@@ -1194,8 +1429,10 @@ export function LiveNoteEditor({
           return (
             <div
               key={block.id}
+              data-block-start={block.start}
+              data-block-end={block.end}
               dir="auto"
-              onClick={() => activateBlockAtOffset(block.end, block.end)}
+              onClick={(e) => handleRenderedClick(e, block.end)}
               className={`${typographyClass} cursor-text`}
               style={{
                 backgroundColor: 'var(--callout-bg)',
@@ -1211,8 +1448,10 @@ export function LiveNoteEditor({
           return (
             <div
               key={block.id}
+              data-block-start={block.start}
+              data-block-end={block.end}
               dir="auto"
-              onClick={() => activateBlockAtOffset(block.end, block.end)}
+              onClick={(e) => handleRenderedClick(e, block.end)}
               className={`${typographyClass} flex items-baseline gap-2.5 pl-2 cursor-text`}
             >
               <span
@@ -1232,8 +1471,10 @@ export function LiveNoteEditor({
           return (
             <div
               key={block.id}
+              data-block-start={block.start}
+              data-block-end={block.end}
               dir="auto"
-              onClick={() => activateBlockAtOffset(block.end, block.end)}
+              onClick={(e) => handleRenderedClick(e, block.end)}
               className={`${typographyClass} flex items-baseline gap-2 pl-1 cursor-text`}
             >
               <span
@@ -1254,7 +1495,9 @@ export function LiveNoteEditor({
           return (
             <div
               key={block.id}
-              onClick={() => activateBlockAtOffset(block.start, block.start)}
+              data-block-start={block.start}
+              data-block-end={block.end}
+              onClick={(e) => handleRenderedClick(e, block.start)}
               className="h-[24px] w-full cursor-text"
             >
               {blocks.length === 1 && (
@@ -1269,8 +1512,10 @@ export function LiveNoteEditor({
         return (
           <p
             key={block.id}
+            data-block-start={block.start}
+            data-block-end={block.end}
             dir="auto"
-            onClick={() => activateBlockAtOffset(block.end, block.end)}
+            onClick={(e) => handleRenderedClick(e, block.end)}
             className={`${typographyClass} cursor-text`}
           >
             {renderInlineTokens(block.bodyStart, block.end)}
@@ -1279,4 +1524,4 @@ export function LiveNoteEditor({
       })}
     </div>
   );
-}
+});

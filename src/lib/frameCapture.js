@@ -1,5 +1,5 @@
 /**
- * ML-Pad Real Frame Capture Engine
+ * GemmaTH Real Frame Capture Engine
  *
  * Supports:
  * 1. Direct HTML5 <video> frame extraction (for local video files, 0 permissions needed).

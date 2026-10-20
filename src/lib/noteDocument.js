@@ -248,7 +248,17 @@ export function getStyleAtSelection(
   const baseInk = normalizeInkKey(defaultInk);
 
   if (selEnd > selStart) {
-    for (let i = selStart; i < Math.min(selEnd, charStyles.length); i++) {
+    const protectedRanges = buildProtectedRanges(rawText);
+    const maxEnd = Math.min(selEnd, charStyles.length);
+    for (let i = selStart; i < maxEnd; i++) {
+      if (rawText[i] !== '\n' && !isIndexProtected(i, protectedRanges) && charStyles[i]) {
+        return {
+          ink: normalizeInkKey(charStyles[i].ink || baseInk),
+          font: normalizeFontKey(charStyles[i].font || baseFont, baseFont),
+        };
+      }
+    }
+    for (let i = selStart; i < maxEnd; i++) {
       if (rawText[i] !== '\n' && charStyles[i]) {
         return {
           ink: normalizeInkKey(charStyles[i].ink || baseInk),

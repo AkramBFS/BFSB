@@ -4,7 +4,7 @@ import { exportMarkdown } from './export.js';
  * Saves markdown text to a .md file using the File System Access API
  * with a fallback to a Blob object URL download.
  * Compatible with `soheib-ai-export`'s `saveToDisk(markdownText)` signature,
- * delegating to the unified ML-Pad `exportMarkdown` engine.
+ * delegating to the unified GemmaTH `exportMarkdown` engine.
  *
  * @param {string} markdownText
  * @param {Object} [options]

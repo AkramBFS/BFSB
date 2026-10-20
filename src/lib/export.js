@@ -1,5 +1,5 @@
 /**
- * Export helpers for ML-Pad notes.
+ * Export helpers for GemmaTH notes.
  * Supports self-contained Markdown file saving (via showSaveFilePicker with Blob fallback)
  * and PDF export via window.print() with white-paper print isolation.
  */

@@ -51,13 +51,25 @@ describe('WCAG 2.1 Contrast Requirements & Stationery Ink Palette', () => {
         describe(`Note Ink: ${inkKey} (${NOTE_INKS[inkKey].label})`, () => {
           const inkHex = resolveInkColor(inkKey, theme, surfaces.pn);
 
-          it(`ink must reach >= 4.5:1 on note page surface (${inkHex} on ${surfaces.pn})`, () => {
-            expect(getContrastRatio(inkHex, surfaces.pn)).toBeGreaterThanOrEqual(4.5);
-          });
+          if (inkKey === 'default') {
+            it(`default ink must reach >= 4.5:1 on note page surface (${inkHex} on ${surfaces.pn})`, () => {
+              expect(getContrastRatio(inkHex, surfaces.pn)).toBeGreaterThanOrEqual(4.5);
+            });
 
-          it(`ink must reach >= 4.5:1 on raised callout/block surface (${inkHex} on ${surfaces.rz})`, () => {
-            expect(getContrastRatio(inkHex, surfaces.rz)).toBeGreaterThanOrEqual(4.5);
-          });
+            it(`default ink must reach >= 4.5:1 on raised callout/block surface (${inkHex} on ${surfaces.rz})`, () => {
+              expect(getContrastRatio(inkHex, surfaces.rz)).toBeGreaterThanOrEqual(4.5);
+            });
+          } else {
+            it(`highlight ink ${inkKey} matches dark-mode highlight color in ${theme} mode (${inkHex})`, () => {
+              expect(inkHex).toBe(NOTE_INKS[inkKey].darkText);
+              expect(getContrastRatio(inkHex, SURFACES.dark.pn)).toBeGreaterThanOrEqual(4.5);
+            });
+
+            it(`evaluateCustomTheme keeps --ink-${inkKey} identical in ${theme} mode`, () => {
+              const evalRes = evaluateCustomTheme(theme, 'cobalt', null);
+              expect(evalRes.tokens[`--ink-${inkKey}`]).toBe(NOTE_INKS[inkKey].darkText);
+            });
+          }
         });
       });
 

@@ -53,6 +53,7 @@ export const NotesPane = forwardRef(function NotesPane(
     youtubeUrl = '',
     aiModel,
     onRequireApiKey,
+    onOpenStudyHub,
   },
   ref
 ) {
@@ -69,6 +70,7 @@ export const NotesPane = forwardRef(function NotesPane(
 
   const fileInputRef = useRef(null);
   const snapImageInputRef = useRef(null);
+  const liveEditorRef = useRef(null);
   const abortControllerRef = useRef(null);
   const undoStackRef = useRef(new Map()); // tabId -> string[]
   const redoStackRef = useRef(new Map()); // tabId -> string[]
@@ -171,18 +173,22 @@ export const NotesPane = forwardRef(function NotesPane(
 
   /**
    * Word-processor font change:
-   * - If text is selected: changes ONLY the selected range's font.
+   * - If text is selected: changes ONLY the selected range's font permanently.
    * - If nothing is selected: sets the active typing font from the caret onward (existing text is untouched).
    */
   const handleToolbarFontChange = useCallback(
     (newFont) => {
       if (!activeTab) return;
-      if (cursorEnd > cursorStart) {
+      const liveRange = liveEditorRef.current?.getCurrentSelectionRange?.();
+      const effStart = typeof liveRange?.[0] === 'number' ? liveRange[0] : cursorStart;
+      const effEnd = typeof liveRange?.[1] === 'number' ? liveRange[1] : cursorEnd;
+
+      if (effEnd > effStart) {
         pushUndoSnapshot(activeTab.id, activeTab.content || '');
         const nextStyles = applyStyleToRange(
           parsedDoc.charStyles,
-          cursorStart,
-          cursorEnd,
+          effStart,
+          effEnd,
           { font: newFont },
           noteFont,
           'default'
@@ -195,8 +201,8 @@ export const NotesPane = forwardRef(function NotesPane(
         );
         onUpdateTab(activeTab.id, {
           content: serialized,
-          cursorStart,
-          cursorEnd,
+          cursorStart: effStart,
+          cursorEnd: effEnd,
         });
       } else {
         setTypingStyleOverride((prev) => ({
@@ -220,18 +226,22 @@ export const NotesPane = forwardRef(function NotesPane(
 
   /**
    * Word-processor ink color change:
-   * - If text is selected: changes ONLY the selected range's ink color.
+   * - If text is selected: changes ONLY the selected range's ink color permanently.
    * - If nothing is selected: sets the active typing ink from the caret onward (existing text is untouched).
    */
   const handleToolbarInkChange = useCallback(
     (newInk) => {
       if (!activeTab) return;
-      if (cursorEnd > cursorStart) {
+      const liveRange = liveEditorRef.current?.getCurrentSelectionRange?.();
+      const effStart = typeof liveRange?.[0] === 'number' ? liveRange[0] : cursorStart;
+      const effEnd = typeof liveRange?.[1] === 'number' ? liveRange[1] : cursorEnd;
+
+      if (effEnd > effStart) {
         pushUndoSnapshot(activeTab.id, activeTab.content || '');
         const nextStyles = applyStyleToRange(
           parsedDoc.charStyles,
-          cursorStart,
-          cursorEnd,
+          effStart,
+          effEnd,
           { ink: newInk },
           noteFont,
           'default'
@@ -244,8 +254,8 @@ export const NotesPane = forwardRef(function NotesPane(
         );
         onUpdateTab(activeTab.id, {
           content: serialized,
-          cursorStart,
-          cursorEnd,
+          cursorStart: effStart,
+          cursorEnd: effEnd,
         });
       } else {
         setTypingStyleOverride((prev) => ({
@@ -553,8 +563,10 @@ export const NotesPane = forwardRef(function NotesPane(
     (nextStart, nextEnd) => {
       if (!activeTab) return;
       if (nextStart !== cursorStart || nextEnd !== cursorEnd) {
-        // Clear any pending collapsed typing override when the user moves the caret
-        setTypingStyleOverride(null);
+        // Only clear typingStyleOverride when the user highlights a range of existing text
+        if (nextEnd > nextStart) {
+          setTypingStyleOverride(null);
+        }
         onUpdateTab(activeTab.id, {
           cursorStart: nextStart,
           cursorEnd: nextEnd,
@@ -723,6 +735,7 @@ export const NotesPane = forwardRef(function NotesPane(
           setSelectedFormulaIdx(0);
           setSlashPaletteOpen((prev) => !prev);
         }}
+        onOpenStudyHub={onOpenStudyHub}
         currentTimeStr={currentTimeStr}
       />
 
@@ -952,6 +965,7 @@ export const NotesPane = forwardRef(function NotesPane(
       >
         <div className="flex-1 min-h-0">
           <LiveNoteEditor
+            ref={liveEditorRef}
             rawText={parsedDoc.rawText}
             charStyles={parsedDoc.charStyles}
             defaultFont={noteFont}

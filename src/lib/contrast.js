@@ -243,49 +243,49 @@ export const NOTE_INKS = {
     key: 'cobalt',
     label: 'Prussian Blue',
     swatchDark: '#8cb5dc',
-    swatchLight: '#1d466b',
+    swatchLight: '#8cb5dc',
     darkText: BASE_SWATCHES.cobalt.dark.accentText,
-    lightText: BASE_SWATCHES.cobalt.light.accentText,
+    lightText: BASE_SWATCHES.cobalt.dark.accentText,
   },
   oxblood: {
     key: 'oxblood',
     label: 'Oxblood',
     swatchDark: '#de9294',
-    swatchLight: '#782224',
+    swatchLight: '#de9294',
     darkText: BASE_SWATCHES.oxblood.dark.accentText,
-    lightText: BASE_SWATCHES.oxblood.light.accentText,
+    lightText: BASE_SWATCHES.oxblood.dark.accentText,
   },
   verdigris: {
     key: 'verdigris',
     label: 'Bottle Green',
     swatchDark: '#86bfa0',
-    swatchLight: '#1e5239',
+    swatchLight: '#86bfa0',
     darkText: BASE_SWATCHES.verdigris.dark.accentText,
-    lightText: BASE_SWATCHES.verdigris.light.accentText,
+    lightText: BASE_SWATCHES.verdigris.dark.accentText,
   },
   plum: {
     key: 'plum',
     label: 'Damson Plum',
     swatchDark: '#c49fd0',
-    swatchLight: '#542f61',
+    swatchLight: '#c49fd0',
     darkText: BASE_SWATCHES.plum.dark.accentText,
-    lightText: BASE_SWATCHES.plum.light.accentText,
+    lightText: BASE_SWATCHES.plum.dark.accentText,
   },
   sepia: {
     key: 'sepia',
     label: 'Walnut Sepia',
     swatchDark: '#d4ad8b',
-    swatchLight: '#633e20',
+    swatchLight: '#d4ad8b',
     darkText: BASE_SWATCHES.sepia.dark.accentText,
-    lightText: BASE_SWATCHES.sepia.light.accentText,
+    lightText: BASE_SWATCHES.sepia.dark.accentText,
   },
   graphite: {
     key: 'graphite',
     label: 'Graphite',
     swatchDark: '#b4bcc7',
-    swatchLight: '#3e444c',
+    swatchLight: '#b4bcc7',
     darkText: BASE_SWATCHES.graphite.dark.accentText,
-    lightText: BASE_SWATCHES.graphite.light.accentText,
+    lightText: BASE_SWATCHES.graphite.dark.accentText,
   },
 };
 
@@ -321,6 +321,10 @@ export function normalizeInkKey(key, fallback = 'default') {
 export function resolveInkColor(inkKey, theme = 'dark', panelBgHex = null) {
   const normKey = normalizeInkKey(inkKey, 'default');
   const ink = NOTE_INKS[normKey] || NOTE_INKS.default;
+  if (normKey !== 'default') {
+    // Highlight/ink colors are shared identically between dark and light modes
+    return ink.darkText;
+  }
   const rawColor = theme === 'light' ? ink.lightText : ink.darkText;
   const targetBg = panelBgHex || (SURFACES[theme]?.pn ?? SURFACES.dark.pn);
   return ensureContrast(rawColor, targetBg, 4.5);
@@ -386,16 +390,13 @@ export function evaluateCustomTheme(mode = 'dark', swatchKey = 'cobalt', customM
   const accRgb = hexToRgb(effectiveAccent);
   const calloutBg = `rgba(${accRgb.r}, ${accRgb.g}, ${accRgb.b}, 0.12)`;
 
-  // Resolve all note inks against current surfaces so switching modes or custom panels keeps every ink >= 4.5:1
+  // Note inks: default ink follows primary text, while highlight inks stay identical across dark & light modes
   const inkTokens = {};
   Object.keys(NOTE_INKS).forEach((k) => {
     if (k === 'default') {
       inkTokens[`--ink-${k}`] = tx;
     } else {
-      let c = resolveInkColor(k, mode, pn);
-      c = ensureContrast(c, bg, 4.5);
-      c = ensureContrast(c, rz, 4.5);
-      inkTokens[`--ink-${k}`] = c;
+      inkTokens[`--ink-${k}`] = NOTE_INKS[k].darkText;
     }
   });
 

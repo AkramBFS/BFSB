@@ -1,5 +1,5 @@
 /**
- * ML-Pad Storage Engine
+ * GemmaTH Storage Engine
  *
  * Strategy:
  * 1. Lightweight structured metadata (tabs, settings, chat history, frame metadata)

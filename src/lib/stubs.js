@@ -1,6 +1,6 @@
 /**
  * Bridges legacy stub signatures (`captureFrame`, `sendToChat`) to the real
- * ML-Pad frameCapture and aiService engines.
+ * GemmaTH frameCapture and aiService engines.
  */
 
 import { generateSampleMathSlide } from './frameCapture.js';
