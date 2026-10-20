@@ -71,6 +71,7 @@ export const NotesPane = forwardRef(function NotesPane(
   const abortControllerRef = useRef(null);
   const undoStackRef = useRef(new Map()); // tabId -> string[]
   const redoStackRef = useRef(new Map()); // tabId -> string[]
+  const latestStateRef = useRef(null);
 
   const { showToast } = useToast();
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
@@ -113,6 +114,17 @@ export const NotesPane = forwardRef(function NotesPane(
       typingStyleOverride,
     ]
   );
+
+  // Keep a synchronous ref to the latest active tab & parsed document so async callbacks
+  // (like AI transcription completing after a network round-trip) never read a stale closure!
+  latestStateRef.current = {
+    activeTab,
+    parsedDoc,
+    cursorStart,
+    cursorEnd,
+    currentCaretStyle,
+    noteFont,
+  };
 
   const pushUndoSnapshot = useCallback((tabId, content) => {
     if (!tabId) return;
@@ -259,14 +271,24 @@ export const NotesPane = forwardRef(function NotesPane(
    */
   const insertAtCursor = useCallback(
     (textToInsert, options = {}) => {
-      if (!activeTab) return;
-      pushUndoSnapshot(activeTab.id, activeTab.content || '');
+      const latest = latestStateRef.current;
+      if (!latest?.activeTab) return;
+      const {
+        activeTab: curTab,
+        parsedDoc: curDoc,
+        cursorStart: curStart,
+        cursorEnd: curEnd,
+        currentCaretStyle: curStyle,
+        noteFont: curFont,
+      } = latest;
 
-      const raw = parsedDoc.rawText;
+      pushUndoSnapshot(curTab.id, curTab.content || '');
+
+      const raw = curDoc.rawText;
       let start =
-        typeof options.replaceStart === 'number' ? options.replaceStart : cursorStart;
+        typeof options.replaceStart === 'number' ? options.replaceStart : curStart;
       let end =
-        typeof options.replaceEnd === 'number' ? options.replaceEnd : cursorEnd;
+        typeof options.replaceEnd === 'number' ? options.replaceEnd : curEnd;
 
       start = Math.max(0, Math.min(raw.length, start));
       end = Math.max(start, Math.min(raw.length, end));
@@ -293,35 +315,27 @@ export const NotesPane = forwardRef(function NotesPane(
 
       const nextStyles = reconcileCharStylesOnEdit(
         raw,
-        parsedDoc.charStyles,
+        curDoc.charStyles,
         nextRaw,
-        currentCaretStyle,
-        noteFont,
+        curStyle,
+        curFont,
         'default'
       );
-      const serialized = serializeNoteContent(nextRaw, nextStyles, noteFont, 'default');
+      const serialized = serializeNoteContent(nextRaw, nextStyles, curFont, 'default');
 
-      onUpdateTab(activeTab.id, {
+      onUpdateTab(curTab.id, {
         content: serialized,
         cursorStart: nextCursor,
         cursorEnd: nextCursor,
       });
     },
-    [
-      activeTab,
-      currentCaretStyle,
-      cursorEnd,
-      cursorStart,
-      noteFont,
-      onUpdateTab,
-      parsedDoc.charStyles,
-      parsedDoc.rawText,
-      pushUndoSnapshot,
-    ]
+    [onUpdateTab, pushUndoSnapshot]
   );
 
   /**
    * Run AI image-to-LaTeX transcription ("Read the formula"):
+   * - Captures the cursor selection range BEFORE awaiting the network call so insertion
+   *   lands at the exact spot the user had their caret when they initiated transcription.
    * - If the image contains a formula, inserts rendered LaTeX at the caret.
    * - If the image contains NO math or fails, shows a plain-language notice + retry
    *   and does NOT insert anything into the note.
@@ -333,6 +347,10 @@ export const NotesPane = forwardRef(function NotesPane(
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      // Capture cursor range BEFORE any await (ported from soheib-ai-export EditorPane.jsx)
+      const savedStart = latestStateRef.current?.cursorStart;
+      const savedEnd = latestStateRef.current?.cursorEnd;
+
       const controller = new AbortController();
       abortControllerRef.current = controller;
       setAiPendingMessage(`Reading formula from ${label}...`);
@@ -346,7 +364,11 @@ export const NotesPane = forwardRef(function NotesPane(
           signal: controller.signal,
         });
 
-        insertAtCursor(res.wrapped, { block: res.displayMode === 'block' });
+        insertAtCursor(res.wrapped, {
+          replaceStart: savedStart,
+          replaceEnd: savedEnd,
+          block: res.displayMode === 'block',
+        });
 
         if (!res.isValid) {
           setLatexWarningBanner({

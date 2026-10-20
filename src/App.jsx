@@ -92,6 +92,25 @@ export default function App() {
   const currentTimeStr = formatSeconds(currentSeconds);
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
+  const handleSnapFrameToLatex = useCallback(
+    async (frame) => {
+      if (!frame?.base64) {
+        showToast('This frame has no image data to transcribe.', 'error');
+        return;
+      }
+      setTranscribingFrameId(frame.id);
+      try {
+        await notesPaneRef.current?.snapImageToLatex(
+          frame.base64,
+          `frame ${frame.timestamp}`
+        );
+      } finally {
+        setTranscribingFrameId(null);
+      }
+    },
+    [showToast]
+  );
+
   // Global clipboard paste handler for images (OS screenshots, copied diagrams)
   // Fix 3: Pasting an image ONLY adds it to the Captured Frames tray (never auto-inserts into the note).
   const handleGlobalPaste = useCallback(
@@ -112,52 +131,52 @@ export default function App() {
       if (!file) return;
 
       e.preventDefault();
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const compressed = await compressImageDataUrl(reader.result, {
-            maxWidth: 1280,
-            maxHeight: 720,
-            quality: 0.85,
-          });
-          const newFrame = {
-            id: nextAppItemId('paste'),
-            timestamp: currentTimeStr,
-            seconds: Math.floor(currentSeconds),
-            videoUrl: youtubeUrl,
-            label: `Pasted ${currentTimeStr}`,
-            caption: `Frame at ${currentTimeStr} (pasted image)`,
-            dataUrl: compressed.dataUrl,
-            base64: compressed.base64,
-            width: compressed.width,
-            height: compressed.height,
-          };
+      try {
+        const compressed = await compressImageDataUrl(file, {
+          maxWidth: 1280,
+          maxHeight: 720,
+          quality: 0.85,
+        });
+        const newFrame = {
+          id: nextAppItemId('paste'),
+          timestamp: currentTimeStr,
+          seconds: Math.floor(currentSeconds),
+          videoUrl: youtubeUrl,
+          label: `Pasted ${currentTimeStr}`,
+          caption: `Frame at ${currentTimeStr} (pasted image)`,
+          dataUrl: compressed.dataUrl,
+          base64: compressed.base64,
+          width: compressed.width,
+          height: compressed.height,
+        };
 
-          await saveFrameMedia(newFrame.id, {
-            dataUrl: newFrame.dataUrl,
-            base64: newFrame.base64,
-          });
-          registerMediaInCache(newFrame.id, {
-            dataUrl: newFrame.dataUrl,
-            base64: newFrame.base64,
-          });
+        await saveFrameMedia(newFrame.id, {
+          dataUrl: newFrame.dataUrl,
+          base64: newFrame.base64,
+        });
+        registerMediaInCache(newFrame.id, {
+          dataUrl: newFrame.dataUrl,
+          base64: newFrame.base64,
+        });
 
-          updateState((prev) => ({
-            frames: [newFrame, ...prev.frames],
-          }));
+        updateState((prev) => ({
+          frames: [newFrame, ...prev.frames],
+        }));
 
-          showToast(
-            `Added pasted image (${currentTimeStr}) to frames tray — click it to choose an action`
-          );
-        } catch {
-          showToast('Could not process pasted image.', 'error');
-        }
-      };
-      reader.readAsDataURL(file);
+        showToast(`Added pasted image (${currentTimeStr}) to frames tray`, 'info', {
+          actionLabel: 'Read formula',
+          onAction: () => {
+            handleSnapFrameToLatex(newFrame);
+          },
+        });
+      } catch {
+        showToast('Could not process pasted image.', 'error');
+      }
     },
     [
       currentSeconds,
       currentTimeStr,
+      handleSnapFrameToLatex,
       registerMediaInCache,
       showToast,
       updateState,
@@ -281,22 +300,6 @@ export default function App() {
   const handleInsertTimestamp = (seconds, formatted) => {
     notesPaneRef.current?.insertAtCursor(`[${formatted}](#t=${formatted}) `);
     showToast(`Inserted timestamp ${formatted}`);
-  };
-
-  const handleSnapFrameToLatex = async (frame) => {
-    if (!frame?.base64) {
-      showToast('This frame has no image data to transcribe.', 'error');
-      return;
-    }
-    setTranscribingFrameId(frame.id);
-    try {
-      await notesPaneRef.current?.snapImageToLatex(
-        frame.base64,
-        `frame ${frame.timestamp}`
-      );
-    } finally {
-      setTranscribingFrameId(null);
-    }
   };
 
   const handleFrameCaptured = async (newFrame, options = {}) => {
